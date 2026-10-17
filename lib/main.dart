@@ -217,6 +217,18 @@ class _DashboardState extends State<Dashboard> {
         'ชนิดเครือข่าย: ${_data['networkType'] ?? _data['network'] ?? 'กำลังอ่านข้อมูล…'}',
         'สัญญาณ: ${dbm == null ? (_data['phonePermissionGranted'] == false ? 'อนุญาตสิทธิ์โทรศัพท์ก่อน' : 'ยังอ่านค่าไม่ได้') : '$dbm dBm'}',
         'ผู้ให้บริการ: ${(_data['carrier'] ?? '').toString().trim().isEmpty ? 'ยังอ่านค่าไม่ได้ (ตรวจ SIM/สิทธิ์โทรศัพท์)' : _data['carrier']}',
+        'สถานะเซลล์: ${_data['lteCellStatus'] ?? 'ยังไม่มีข้อมูล'}',
+        'CI: ${_radioValue('lteCi')}',
+        'eNB ID : CID: ${_radioValue('lteEnbId')} : ${_radioValue('lteCid')}',
+        'TAC: ${_radioValue('lteTac')}',
+        'PCI: ${_radioValue('ltePci')}',
+        'BW: ${_bandwidthText()}',
+        'EARFCN: ${_radioValue('lteEarfcn')}',
+        'RSSI: ${_radioValue('lteRssi', ' dBm')}',
+        'RSRP: ${_radioValue('lteRsrp', ' dBm')}',
+        'RSRQ: ${_radioValue('lteRsrq', ' dB')}',
+        'SNR: ${_radioValue('lteSnr', ' dB')}',
+        'TA: ${_radioValue('lteTa')}',
       ]),
       Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('สถานะบริการ: ${_running ? 'ทำงานเบื้องหลัง' : 'หยุดอยู่'}'),Text('เริ่มมา: ${_started == null ? 'ไม่ทราบ' : _elapsed(DateTime.now().difference(_started!))}'),const SizedBox(height:12),SizedBox(width:double.infinity,height:56,child:FilledButton.icon(style:FilledButton.styleFrom(backgroundColor:_running?Colors.red:Colors.green),onPressed:_startStop,icon:Icon(_running?Icons.stop:Icons.play_arrow),label:Text(_running?'⏹️ หยุดติดตาม':'▶️ เริ่มติดตาม')))]))),
       Wrap(spacing:8,runSpacing:8,children:[OutlinedButton.icon(onPressed:()=>_settings('location'),icon:const Icon(Icons.location_on),label:const Text('ตั้งค่า GPS')),OutlinedButton.icon(onPressed:()=>_settings('app'),icon:const Icon(Icons.battery_saver),label:const Text('ตั้งค่าแอป')),OutlinedButton.icon(onPressed:_checking?null:_checkUpdate,icon:const Icon(Icons.system_update),label:const Text('เช็คอัปเดต'))]),
@@ -225,6 +237,18 @@ class _DashboardState extends State<Dashboard> {
     ]));
   }
   Widget _card(String title,List<String> lines)=>Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(title,style:const TextStyle(fontSize:18,fontWeight:FontWeight.bold)),const Divider(),...lines.map((s)=>Padding(padding:const EdgeInsets.symmetric(vertical:3),child:Text(s)))])));
+  String _radioValue(String key, [String suffix = '']) {
+    final value = _data[key];
+    if (value is! num) return 'N/A';
+    return '${value.toString()}$suffix';
+  }
+
+  String _bandwidthText() {
+    final value = _data['lteBandwidthKhz'];
+    if (value is! num || value <= 0) return 'N/A';
+    return '${(value / 1000).toStringAsFixed(1)} MHz';
+  }
+
   String _satelliteText() {
     final visible = _data['satellites'];
     final used = _data['satellitesUsed'];

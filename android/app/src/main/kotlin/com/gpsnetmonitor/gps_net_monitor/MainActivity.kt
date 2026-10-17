@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.telephony.TelephonyManager
+import android.telephony.CellInfoLte
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -87,6 +88,7 @@ class MainActivity : FlutterActivity() {
             this, Manifest.permission.READ_PHONE_STATE
         ) == PackageManager.PERMISSION_GRANTED
         result["phonePermissionGranted"] = phoneGranted
+        readLteCellInfo(result, phoneGranted && fineLocationGranted)
 
         if (phoneGranted) {
             try {
@@ -128,6 +130,74 @@ class MainActivity : FlutterActivity() {
             result["dbm"] = null
         }
         return result
+    }
+
+
+    private fun validCellValue(value: Int, min: Int, max: Int): Int? =
+        value.takeIf { it != Int.MAX_VALUE && it in min..max }
+
+    @SuppressLint("MissingPermission")
+    @Suppress("DEPRECATION")
+    private fun readLteCellInfo(result: MutableMap<String, Any?>, allowed: Boolean) {
+        val keys = listOf(
+            "lteCi", "lteEnbId", "lteCid", "lteTac", "ltePci", "lteBandwidthKhz",
+            "lteEarfcn", "lteRssi", "lteRsrp", "lteRsrq", "lteSnr", "lteTa"
+        )
+        keys.forEach { result[it] = null }
+
+        if (!allowed) {
+            result["lteCellStatus"] = "ต้องอนุญาตตำแหน่งแม่นยำและสิทธิ์โทรศัพท์"
+            return
+        }
+
+        try {
+            val telephony = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
+            val cells = telephony.allCellInfo.orEmpty()
+            val lte = cells.filterIsInstance<CellInfoLte>().firstOrNull { it.isRegistered }
+
+            if (lte == null) {
+                result["lteCellStatus"] = if (cells.any { it.isRegistered }) {
+                    "เครือข่ายที่ลงทะเบียนไม่รายงานเซลล์ LTE"
+                } else {
+                    "กำลังรอข้อมูลเซลล์จาก Android"
+                }
+                return
+            }
+
+            val identity = lte.cellIdentity
+            val signal = lte.cellSignalStrength
+            val ci = validCellValue(identity.ci, 0, 0x0FFFFFFF)
+            result["lteCi"] = ci
+            // LTE ECI is commonly split into eNB ID (upper bits) and local cell ID (8 lower bits).
+            result["lteEnbId"] = ci?.ushr(8)
+            result["lteCid"] = ci?.and(0xFF)
+            result["lteTac"] = validCellValue(identity.tac, 0, 65535)
+            result["ltePci"] = validCellValue(identity.pci, 0, 503)
+            result["lteEarfcn"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                validCellValue(identity.earfcn, 0, 262143)
+            } else null
+            result["lteBandwidthKhz"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                validCellValue(identity.bandwidth, 1, 100000)
+            } else null
+            result["lteRssi"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                validCellValue(signal.rssi, -150, -40)
+            } else null
+            result["lteRsrp"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                validCellValue(signal.rsrp, -160, -30)
+            } else null
+            result["lteRsrq"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                validCellValue(signal.rsrq, -40, 0)
+            } else null
+            result["lteSnr"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                validCellValue(signal.rssnr, -20, 30)
+            } else null
+            result["lteTa"] = validCellValue(signal.timingAdvance, 0, 1282)
+            result["lteCellStatus"] = "อ่านข้อมูลเซลล์ LTE ที่ลงทะเบียนแล้ว"
+        } catch (_: SecurityException) {
+            result["lteCellStatus"] = "Android ไม่อนุญาตให้อ่านข้อมูลเซลล์"
+        } catch (_: RuntimeException) {
+            result["lteCellStatus"] = "อุปกรณ์หรือเครือข่ายไม่เปิดเผยข้อมูลเซลล์"
+        }
     }
 
     private fun networkTypeLabel(type: Int): String = when (type) {
