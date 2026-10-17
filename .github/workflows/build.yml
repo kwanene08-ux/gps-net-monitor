@@ -1,26 +1,34 @@
 name: Build APK
+
 on:
   push:
     branches: [main]
   workflow_dispatch:
+
 permissions:
   contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: '17'
+
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.24.5'
           channel: stable
           cache: true
+
       - name: Create Android platform scaffolding if needed
+        shell: bash
         run: |
+          set -e
           if [ ! -f android/settings.gradle ] && [ ! -f android/settings.gradle.kts ]; then
             cp android/app/src/main/AndroidManifest.xml /tmp/GPSNetManifest.xml
             cp android/app/src/main/res/xml/file_paths.xml /tmp/GPSNetFilePaths.xml
@@ -29,25 +37,139 @@ jobs:
             mkdir -p android/app/src/main/res/xml
             cp /tmp/GPSNetFilePaths.xml android/app/src/main/res/xml/file_paths.xml
           fi
+
+      - name: Configure persistent Android release signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$ANDROID_KEYSTORE_PASSWORD"
+          test -n "$ANDROID_KEY_ALIAS"
+          test -n "$ANDROID_KEY_PASSWORD"
+
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" |
+            base64 --decode > android/app/release-key.jks
+
+          cat > android/key.properties <<EOF
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyPassword=$ANDROID_KEY_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          storeFile=release-key.jks
+          EOF
+
+          chmod 600 android/key.properties android/app/release-key.jks
+
+          keytool -list \
+            -keystore android/app/release-key.jks \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -alias "$ANDROID_KEY_ALIAS"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("android/app/build.gradle")
+          if not path.is_file():
+              raise SystemExit(
+                  "ไม่พบ android/app/build.gradle; หยุดเพื่อไม่สร้าง APK "
+                  "โดยไม่มีการตั้งค่าลายเซ็น"
+              )
+
+          text = path.read_text()
+
+          if "import java.util.Properties" not in text:
+              text = (
+                  "import java.util.Properties\n"
+                  "import java.io.FileInputStream\n\n"
+                  + text
+              )
+
+          plugins = re.search(r"(?s)\bplugins\s*\{.*?\}", text)
+          if not plugins:
+              raise SystemExit("ไม่พบ plugins block ใน build.gradle")
+
+          if "def keystoreProperties = new Properties()" not in text:
+              config = """
+          def keystoreProperties = new Properties()
+          def keystorePropertiesFile = rootProject.file("key.properties")
+          if (!keystorePropertiesFile.exists()) {
+              throw new GradleException("Missing android/key.properties")
+          }
+          keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+          """
+              text = text[:plugins.end()] + "\n" + config + "\n" + text[plugins.end():]
+
+          if "signingConfigs {" not in text:
+              android = re.search(r"(?m)^android\s*\{", text)
+              if not android:
+                  raise SystemExit("ไม่พบ android block ใน build.gradle")
+
+              signing = """
+              signingConfigs {
+                  release {
+                      keyAlias = keystoreProperties['keyAlias']
+                      keyPassword = keystoreProperties['keyPassword']
+                      storeFile = file(keystoreProperties['storeFile'])
+                      storePassword = keystoreProperties['storePassword']
+                  }
+              }
+          """
+              text = text[:android.end()] + "\n" + signing + text[android.end():]
+
+          text, count = re.subn(
+              r"signingConfig\s*=\s*signingConfigs\.debug",
+              "signingConfig = signingConfigs.release",
+              text
+          )
+
+          if count == 0 and "signingConfig = signingConfigs.release" not in text:
+              release = re.search(r"(?s)buildTypes\s*\{\s*release\s*\{", text)
+              if not release:
+                  raise SystemExit("ไม่พบ release build type")
+              text = (
+                  text[:release.end()]
+                  + "\n            signingConfig = signingConfigs.release"
+                  + text[release.end():]
+              )
+
+          path.write_text(text)
+          print("ตั้งค่า release signing ใน build.gradle แล้ว")
+          PY
+
+          grep -n -A8 'signingConfigs' android/app/build.gradle
+          grep -n 'signingConfig' android/app/build.gradle
+
       - name: Install dependencies
         run: flutter pub get
+
       - name: Analyze Dart
         run: flutter analyze
-      - name: Build ARM64 APK
+
+      - name: Build signed ARM64 APK
         run: flutter build apk --release --target-platform android-arm64
+
       - uses: actions/upload-artifact@v4
         with:
           name: gps-net-monitor-apk
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
-      - name: Publish versioned release when tag is new
+
+      - name: Publish versioned release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
+          set -euo pipefail
           VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d'+' -f1)
           if ! gh release view "v${VERSION}" >/dev/null 2>&1; then
             gh release create "v${VERSION}" build/app/outputs/flutter-apk/app-release.apk \
-              --title "GPS Net Monitor v${VERSION}" --notes "Build จาก GitHub Actions"
+              --title "GPS Net Monitor v${VERSION}" \
+              --notes "Build จาก GitHub Actions พร้อมลายเซ็นถาวร"
           else
-            echo "Release v${VERSION} มีแล้ว; ดาวน์โหลด APK จาก Artifacts ของ workflow นี้"
+            echo "Release v${VERSION} มีอยู่แล้ว; ไม่เขียนทับ APK เดิม"
           fi
