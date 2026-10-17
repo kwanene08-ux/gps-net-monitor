@@ -18,7 +18,11 @@ class GpsMonitorTaskHandler extends TaskHandler {
   @override Future<void> onRepeatEvent(DateTime timestamp) async {
     Position? p;
     try {
-      p = await Geolocator.getCurrentPosition(locationSettings: const AndroidSettings(accuracy: LocationAccuracy.best, distanceFilter: 0, forceLocationManager: true, intervalDuration: Duration(seconds: 1), timeLimit: Duration(seconds: 2)));
+      p = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.best,
+        forceAndroidLocationManager: true,
+        timeLimit: const Duration(seconds: 2),
+      );
     } catch (_) {}
     if (p != null && p.accuracy <= 100) {
       final last = _lastAccepted;
@@ -44,7 +48,7 @@ class GpsMonitorTaskHandler extends TaskHandler {
     await FlutterForegroundTask.updateService(notificationTitle:'🟢 GPS Net Monitor — กำลังทำงาน',notificationText:'GPS $acc | 📶 $_network ${_dbm ?? 'N/A'} dBm');
   }
   Future<void> _alertOnce(String message) async { final now=DateTime.now(); if(_lastAlert!=null && now.difference(_lastAlert!)<const Duration(seconds:30))return; _lastAlert=now; /* ไม่เด้ง alert ซ้ำถี่; ใช้ log/notification service แยกเพิ่มได้ */ }
-  @override Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {}
+  @override Future<void> onDestroy(DateTime timestamp) async {}
   @override void onReceiveData(Object data) {}
   @override void onNotificationButtonPressed(String id) { if(id=='stop') FlutterForegroundTask.stopService(); }
   @override void onNotificationPressed() { FlutterForegroundTask.launchApp('/'); }

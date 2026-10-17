@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:http/http.dart' as http;
@@ -24,12 +23,11 @@ void main() async {
       channelImportance: NotificationChannelImportance.LOW,
       priority: NotificationPriority.LOW, onlyAlertOnce: true,
       playSound: false, enableVibration: false,
-      buttons: [const NotificationButton(id: 'stop', text: 'หยุด')],
     ),
     iosNotificationOptions: const IOSNotificationOptions(),
     foregroundTaskOptions: ForegroundTaskOptions(
       eventAction: ForegroundTaskEventAction.repeat(3000),
-      autoRunOnBoot: false, allowWakeLock: true, allowWakelockTimeout: false,
+      autoRunOnBoot: false, allowWakeLock: true,
     ),
   );
   runApp(const WithForegroundTask(child: GPSNetMonitorApp()));
@@ -51,9 +49,19 @@ class _DashboardState extends State<Dashboard> {
   String _updateText = 'กดเพื่อเช็คเวอร์ชัน';
   final List<String> _logs = [];
   DateTime? _started;
-  StreamSubscription<Object>? _receiveSub;
 
-  @override void initState() { super.initState(); _receiveSub = FlutterForegroundTask.receivePort?.listen((dynamic d) { if (d is Map) setState(() => _data = Map<String,dynamic>.from(d)); }); _restore(); }
+  @override
+  void initState() {
+    super.initState();
+    FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
+    _restore();
+  }
+
+  void _onReceiveTaskData(Object d) {
+    if (d is Map && mounted) {
+      setState(() => _data = Map<String, dynamic>.from(d));
+    }
+  }
   Future<void> _restore() async { final running = await FlutterForegroundTask.isRunningService; if (mounted) setState(() => _running = running); }
   void _log(String s) { final now = DateTime.now(); _logs.insert(0, '${now.hour.toString().padLeft(2,'0')}:${now.minute.toString().padLeft(2,'0')} $s'); if (_logs.length > 30) _logs.removeLast(); }
   Future<void> _startStop() async {
@@ -65,7 +73,11 @@ class _DashboardState extends State<Dashboard> {
     if (!bg.isGranted) { _snack('หากต้องการติดตามเมื่อปิดจอ ให้ตั้ง Location permission เป็น Allow all the time ในการตั้งค่าแอป'); }
     final result = await FlutterForegroundTask.startService(
       serviceId: 7001, notificationTitle: '🟢 GPS Net Monitor — กำลังทำงาน',
-      notificationText: 'กำลังเริ่มอ่าน GPS…', callback: startCallback,
+      notificationText: 'กำลังเริ่มอ่าน GPS…',
+      notificationButtons: [
+        const NotificationButton(id: 'stop', text: 'หยุด')
+      ],
+      callback: startCallback,
     );
     if (result is ServiceRequestSuccess) { setState(() { _running = true; _started = DateTime.now(); }); _log('เริ่มติดตาม'); }
     else { _snack('เริ่มบริการไม่สำเร็จ: $result'); }
@@ -100,7 +112,11 @@ class _DashboardState extends State<Dashboard> {
     finally { if (mounted) setState(() => _checking = false); }
   }
   int _compare(String a,String b) { List<int> p(String s)=>s.split('.').map((x)=>int.tryParse(x.replaceAll(RegExp(r'[^0-9]'),''))??0).toList(); final x=p(a),y=p(b); for(var i=0;i<3;i++){final n=i<x.length?x[i]:0,m=i<y.length?y[i]:0;if(n!=m)return n.compareTo(m);}return 0; }
-  @override void dispose() { _receiveSub?.cancel(); super.dispose(); }
+  @override
+  void dispose() {
+    FlutterForegroundTask.removeTaskDataCallback(_onReceiveTaskData);
+    super.dispose();
+  }
   @override Widget build(BuildContext context) {
     final accuracy = (_data['accuracy'] as num?)?.toDouble(); final dbm = _data['dbm'] as int?;
     final gpsScore = accuracy == null ? 0 : accuracy <= 5 ? 50 : accuracy <= 15 ? 35 : accuracy <= 30 ? 15 : 0;
