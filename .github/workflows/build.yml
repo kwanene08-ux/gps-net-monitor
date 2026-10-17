@@ -32,10 +32,13 @@ jobs:
           if [ ! -f android/settings.gradle ] && [ ! -f android/settings.gradle.kts ]; then
             cp android/app/src/main/AndroidManifest.xml /tmp/GPSNetManifest.xml
             cp android/app/src/main/res/xml/file_paths.xml /tmp/GPSNetFilePaths.xml
+            cp android/app/src/main/kotlin/com/gpsnetmonitor/gps_net_monitor/MainActivity.kt /tmp/GPSNetMainActivity.kt
             flutter create --platforms=android --project-name gps_net_monitor --org com.gpsnetmonitor .
             cp /tmp/GPSNetManifest.xml android/app/src/main/AndroidManifest.xml
             mkdir -p android/app/src/main/res/xml
             cp /tmp/GPSNetFilePaths.xml android/app/src/main/res/xml/file_paths.xml
+            mkdir -p android/app/src/main/kotlin/com/gpsnetmonitor/gps_net_monitor
+            cp /tmp/GPSNetMainActivity.kt android/app/src/main/kotlin/com/gpsnetmonitor/gps_net_monitor/MainActivity.kt
           fi
 
       - name: Configure persistent Android release signing

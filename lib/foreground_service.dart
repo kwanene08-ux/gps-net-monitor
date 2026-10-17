@@ -12,7 +12,6 @@ class GpsMonitorTaskHandler extends TaskHandler {
   Position? _lastAccepted;
   DateTime? _lastNetRead;
   String _network = 'N/A';
-  int? _dbm;
   DateTime? _lastAlert;
 
   @override
@@ -99,9 +98,6 @@ class GpsMonitorTaskHandler extends TaskHandler {
           : null,
       'provider': 'gps',
       'network': _network,
-      'dbm': _dbm,
-      'carrier': 'N/A',
-      'satellites': 'N/A',
       'timestamp': now.toIso8601String(),
       'fixTimestamp': fixTime?.toIso8601String(),
       'ageSeconds': ageSeconds,

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -51,12 +52,57 @@ class _DashboardState extends State<Dashboard> {
   String _updateText = 'กดเพื่อเช็คเวอร์ชัน';
   final List<String> _logs = [];
   DateTime? _started;
+  Timer? _refreshTimer;
+  DateTime? _lastNativePoll;
+  bool _nativeBusy = false;
 
   @override
   void initState() {
     super.initState();
     FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
     _restore();
+    unawaited(_refreshNativeStatus());
+    _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      final rawFixTime = _data['fixTimestamp'];
+      final fixTime = rawFixTime is String ? DateTime.tryParse(rawFixTime) : null;
+      if (fixTime != null) {
+        final diff = DateTime.now().difference(fixTime).inSeconds;
+        final age = diff < 0 ? 0 : diff;
+        final fresh = age <= 10;
+        if (_data['ageSeconds'] != age || _data['gpsFresh'] != fresh ||
+            _data['gpsStatus'] != (fresh ? 'ข้อมูล GPS ล่าสุด' : 'ข้อมูล GPS เก่า')) {
+          setState(() {
+            _data = {
+              ..._data,
+              'ageSeconds': age,
+              'gpsFresh': fresh,
+              'gpsStatus': fresh ? 'ข้อมูล GPS ล่าสุด' : 'ข้อมูล GPS เก่า',
+            };
+          });
+        }
+      }
+      final lastPoll = _lastNativePoll;
+      if (lastPoll == null || DateTime.now().difference(lastPoll) >= const Duration(seconds: 2)) {
+        unawaited(_refreshNativeStatus());
+      }
+    });
+  }
+
+  Future<void> _refreshNativeStatus() async {
+    if (_nativeBusy) return;
+    _nativeBusy = true;
+    _lastNativePoll = DateTime.now();
+    try {
+      final status = await const MethodChannel('gps_net_monitor/native_status')
+          .invokeMapMethod<String, dynamic>('getNativeStatus');
+      if (!mounted || status == null) return;
+      setState(() => _data = {..._data, ...status});
+    } catch (e) {
+      debugPrint('อ่านสถานะ Android ไม่สำเร็จ: $e');
+    } finally {
+      _nativeBusy = false;
+    }
   }
 
   void _onReceiveTaskData(Object d) {
@@ -75,7 +121,7 @@ class _DashboardState extends State<Dashboard> {
     }
 
     if (mounted) {
-      setState(() => _data = Map<String, dynamic>.from(d));
+      setState(() => _data = {..._data, ...Map<String, dynamic>.from(d)});
     }
   }
   Future<void> _restore() async { final running = await FlutterForegroundTask.isRunningService; if (mounted) setState(() => _running = running); }
@@ -84,7 +130,12 @@ class _DashboardState extends State<Dashboard> {
     if (_running) { await FlutterForegroundTask.stopService(); setState(() => _running = false); _log('หยุดติดตาม'); return; }
     final loc = await Permission.locationWhenInUse.request();
     if (!loc.isGranted) { _snack('ต้องอนุญาตตำแหน่งก่อน'); return; }
-    if (Platform.isAndroid) { await Permission.notification.request(); }
+    if (Platform.isAndroid) {
+      await Permission.notification.request();
+      if (!(await Permission.phone.status).isGranted) {
+        await Permission.phone.request();
+      }
+    }
     final bg = await Permission.locationAlways.status;
     if (!bg.isGranted) { _snack('หากต้องการติดตามเมื่อปิดจอ ให้ตั้ง Location permission เป็น Allow all the time ในการตั้งค่าแอป'); }
     final result = await FlutterForegroundTask.startService(
@@ -130,6 +181,7 @@ class _DashboardState extends State<Dashboard> {
   int _compare(String a,String b) { List<int> p(String s)=>s.split('.').map((x)=>int.tryParse(x.replaceAll(RegExp(r'[^0-9]'),''))??0).toList(); final x=p(a),y=p(b); for(var i=0;i<3;i++){final n=i<x.length?x[i]:0,m=i<y.length?y[i]:0;if(n!=m)return n.compareTo(m);}return 0; }
   @override
   void dispose() {
+    _refreshTimer?.cancel();
     FlutterForegroundTask.removeTaskDataCallback(_onReceiveTaskData);
     super.dispose();
   }
@@ -158,16 +210,29 @@ class _DashboardState extends State<Dashboard> {
     return Scaffold(appBar: AppBar(title: const Text('GPS Net Monitor'), actions:[IconButton(onPressed:()=>_settings('app'), icon:const Icon(Icons.settings))]), body: ListView(padding: const EdgeInsets.all(16), children:[
       Card(color:color.withOpacity(.12), child: Padding(padding:const EdgeInsets.all(18), child:Row(children:[Icon(Icons.circle,color:color,size:20),const SizedBox(width:10),Expanded(child:Text(status,style:Theme.of(context).textTheme.titleLarge)),Text(gpsFresh ? '$score / 100' : 'N/A',style:Theme.of(context).textTheme.titleLarge)]))),
       _card('🛰️ GPS', [ 'สถานะ GPS: ${_data['gpsStatus'] ?? 'รอข้อมูล GPS'}',
-        'อายุข้อมูล: ${_data['ageSeconds'] == null ? 'N/A' : '${_data['ageSeconds']} วินาที'}',
-        'ดาวเทียม: ${_data['satellites'] ?? 'N/A'}', 'Accuracy: ${accuracy == null ? 'N/A' : '±${accuracy.toStringAsFixed(1)} ม.'}', 'ความเร็ว: ${_data['speedKmh'] == null ? 'N/A' : '${(_data['speedKmh'] as num).toStringAsFixed(1)} กม./ชม.'}', 'Latitude: ${_data['latitude'] ?? 'N/A'}', 'Longitude: ${_data['longitude'] ?? 'N/A'}', 'Provider: ${_data['provider'] ?? 'gps (รอข้อมูล)'}' ]),
-      _card('📶 เครือข่าย', ['ชนิด: ${_data['network'] ?? 'N/A'}','สัญญาณ dBm: ${dbm ?? 'N/A'}','ผู้ให้บริการ: ${_data['carrier'] ?? 'N/A'}','หมายเหตุ: Android อาจไม่อนุญาตให้อ่าน dBm ในบางรุ่น']),
+        'อายุข้อมูล: ${_data['ageSeconds'] == null ? 'กำลังรอข้อมูล GPS' : '${_data['ageSeconds']} วินาที'}',
+        'ดาวเทียม: ${_satelliteText()}', 'Accuracy: ${accuracy == null ? 'N/A' : '±${accuracy.toStringAsFixed(1)} ม.'}', 'ความเร็ว: ${_data['speedKmh'] == null ? 'N/A' : '${(_data['speedKmh'] as num).toStringAsFixed(1)} กม./ชม.'}', 'Latitude: ${_data['latitude'] ?? 'N/A'}', 'Longitude: ${_data['longitude'] ?? 'N/A'}', 'Provider: ${_data['provider'] ?? 'gps (รอข้อมูล)'}' ]),
+      _card('📶 เครือข่าย', [
+        'อุปกรณ์: ${_data['device'] ?? 'กำลังอ่านข้อมูล…'}',
+        'ชนิดเครือข่าย: ${_data['networkType'] ?? _data['network'] ?? 'กำลังอ่านข้อมูล…'}',
+        'สัญญาณ: ${dbm == null ? (_data['phonePermissionGranted'] == false ? 'อนุญาตสิทธิ์โทรศัพท์ก่อน' : 'ยังอ่านค่าไม่ได้') : '$dbm dBm'}',
+        'ผู้ให้บริการ: ${(_data['carrier'] ?? '').toString().trim().isEmpty ? 'ยังอ่านค่าไม่ได้ (ตรวจ SIM/สิทธิ์โทรศัพท์)' : _data['carrier']}',
+      ]),
       Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('สถานะบริการ: ${_running ? 'ทำงานเบื้องหลัง' : 'หยุดอยู่'}'),Text('เริ่มมา: ${_started == null ? 'ไม่ทราบ' : _elapsed(DateTime.now().difference(_started!))}'),const SizedBox(height:12),SizedBox(width:double.infinity,height:56,child:FilledButton.icon(style:FilledButton.styleFrom(backgroundColor:_running?Colors.red:Colors.green),onPressed:_startStop,icon:Icon(_running?Icons.stop:Icons.play_arrow),label:Text(_running?'⏹️ หยุดติดตาม':'▶️ เริ่มติดตาม')))]))),
       Wrap(spacing:8,runSpacing:8,children:[OutlinedButton.icon(onPressed:()=>_settings('location'),icon:const Icon(Icons.location_on),label:const Text('ตั้งค่า GPS')),OutlinedButton.icon(onPressed:()=>_settings('app'),icon:const Icon(Icons.battery_saver),label:const Text('ตั้งค่าแอป')),OutlinedButton.icon(onPressed:_checking?null:_checkUpdate,icon:const Icon(Icons.system_update),label:const Text('เช็คอัปเดต'))]),
       Padding(padding:const EdgeInsets.symmetric(vertical:8),child:Text(_updateText,style:const TextStyle(fontSize:12))),
       Text('📋 ประวัติวันนี้',style:Theme.of(context).textTheme.titleMedium), if(_logs.isEmpty) const Text('ยังไม่มีเหตุการณ์ในเซสชันนี้'), ..._logs.map((s)=>ListTile(dense:true,leading:const Icon(Icons.history),title:Text(s))),
-      const SizedBox(height:12),const Text('คะแนนเครือข่ายจะเป็น 0 เมื่อ Android ไม่เปิดเผยค่า dBm; จึงอาจแสดง “หยุดก่อน” แม้เน็ตใช้งานได้',style:TextStyle(fontSize:12,color:Colors.grey)),
     ]));
   }
   Widget _card(String title,List<String> lines)=>Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(title,style:const TextStyle(fontSize:18,fontWeight:FontWeight.bold)),const Divider(),...lines.map((s)=>Padding(padding:const EdgeInsets.symmetric(vertical:3),child:Text(s)))])));
+  String _satelliteText() {
+    final visible = _data['satellites'];
+    final used = _data['satellitesUsed'];
+    if (visible is num && visible > 0) {
+      return '${visible.toInt()} ดวง${used is num ? ' (ใช้ ${used.toInt()})' : ''}';
+    }
+    return (_data['satelliteStatus'] ?? 'กำลังค้นหาดาวเทียม…').toString();
+  }
+
   String _elapsed(Duration d) { if(d.inSeconds<0)return '0 นาที'; if(d.inHours>0)return '${d.inHours} ชม. ${d.inMinutes%60} นาที'; return '${d.inMinutes} นาที'; }
 }
