@@ -55,6 +55,8 @@ class _DashboardState extends State<Dashboard> {
   Timer? _refreshTimer;
   DateTime? _lastNativePoll;
   bool _nativeBusy = false;
+  bool _agpsBusy = false;
+  String _agpsStatus = 'ยังไม่ได้สั่งอัปเดต A-GPS';
 
   @override
   void initState() {
@@ -155,6 +157,65 @@ class _DashboardState extends State<Dashboard> {
     else if (type == 'app') { await openAppSettings(); }
     else { await openAppSettings(); }
   }
+  Future<void> _runAgpsAction({required bool reset}) async {
+    if (_agpsBusy) return;
+    if (reset) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('ยืนยัน Reset A-GPS?'),
+          content: const Text(
+            'คำสั่งนี้จะขอให้ระบบล้างข้อมูลช่วย GPS ทั้งหมดที่ผู้ให้บริการเปิดให้ล้างได้ '
+            'อาจทำให้การหาตำแหน่งครั้งถัดไปช้าลง และไม่ใช่วิธีแก้ GPS กระโดดที่ควรกดเป็นประจำ',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('ยกเลิก'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('ยืนยันล้างข้อมูล'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+
+    setState(() {
+      _agpsBusy = true;
+      _agpsStatus = reset ? 'กำลังส่งคำสั่ง Reset…' : 'กำลังส่งคำขออัปเดต A-GPS…';
+    });
+    try {
+      final loc = await Permission.locationWhenInUse.request();
+      if (!loc.isGranted) {
+        throw PlatformException(code: 'location_permission', message: 'ต้องอนุญาตตำแหน่งแบบแม่นยำก่อน');
+      }
+      final result = await const MethodChannel('gps_net_monitor/native_status')
+          .invokeMapMethod<String, dynamic>(reset ? 'resetAgps' : 'refreshAgps');
+      final message = (result?['message'] ?? 'Android ไม่ส่งรายละเอียดผลลัพธ์กลับมา').toString();
+      if (mounted) {
+        setState(() => _agpsStatus = message);
+        _snack(message);
+      }
+    } on PlatformException catch (e) {
+      final message = e.message ?? 'ไม่สามารถสั่งงาน A-GPS ได้';
+      if (mounted) {
+        setState(() => _agpsStatus = message);
+        _snack(message);
+      }
+    } catch (e) {
+      final message = 'สั่งงาน A-GPS ไม่สำเร็จ: $e';
+      if (mounted) {
+        setState(() => _agpsStatus = message);
+        _snack(message);
+      }
+    } finally {
+      if (mounted) setState(() => _agpsBusy = false);
+    }
+  }
+
   Future<void> _checkUpdate() async {
     setState(() { _checking = true; _updateText = 'กำลังตรวจสอบ…'; });
     try {
@@ -231,7 +292,14 @@ class _DashboardState extends State<Dashboard> {
         'TA: ${_radioValue('lteTa')}',
       ]),
       Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('สถานะบริการ: ${_running ? 'ทำงานเบื้องหลัง' : 'หยุดอยู่'}'),Text('เริ่มมา: ${_started == null ? 'ไม่ทราบ' : _elapsed(DateTime.now().difference(_started!))}'),const SizedBox(height:12),SizedBox(width:double.infinity,height:56,child:FilledButton.icon(style:FilledButton.styleFrom(backgroundColor:_running?Colors.red:Colors.green),onPressed:_startStop,icon:Icon(_running?Icons.stop:Icons.play_arrow),label:Text(_running?'⏹️ หยุดติดตาม':'▶️ เริ่มติดตาม')))]))),
-      Wrap(spacing:8,runSpacing:8,children:[OutlinedButton.icon(onPressed:()=>_settings('location'),icon:const Icon(Icons.location_on),label:const Text('ตั้งค่า GPS')),OutlinedButton.icon(onPressed:()=>_settings('app'),icon:const Icon(Icons.battery_saver),label:const Text('ตั้งค่าแอป')),OutlinedButton.icon(onPressed:_checking?null:_checkUpdate,icon:const Icon(Icons.system_update),label:const Text('เช็คอัปเดต'))]),
+      Wrap(spacing:8,runSpacing:8,children:[
+        OutlinedButton.icon(onPressed:()=>_settings('location'),icon:const Icon(Icons.location_on),label:const Text('ตั้งค่า GPS')),
+        OutlinedButton.icon(onPressed:()=>_settings('app'),icon:const Icon(Icons.battery_saver),label:const Text('ตั้งค่าแอป')),
+        OutlinedButton.icon(onPressed:_checking?null:_checkUpdate,icon:const Icon(Icons.system_update),label:const Text('เช็คอัปเดต')),
+        FilledButton.icon(onPressed:_agpsBusy?null:()=>_runAgpsAction(reset:false),icon:const Icon(Icons.satellite_alt),label:const Text('อัปเดต A-GPS')),
+        OutlinedButton.icon(onPressed:_agpsBusy?null:()=>_runAgpsAction(reset:true),icon:const Icon(Icons.restart_alt),label:const Text('Reset A-GPS')),
+      ]),
+      Padding(padding:const EdgeInsets.symmetric(vertical:4),child:Text(_agpsStatus,style:const TextStyle(fontSize:12))),
       Padding(padding:const EdgeInsets.symmetric(vertical:8),child:Text(_updateText,style:const TextStyle(fontSize:12))),
       Text('📋 ประวัติวันนี้',style:Theme.of(context).textTheme.titleMedium), if(_logs.isEmpty) const Text('ยังไม่มีเหตุการณ์ในเซสชันนี้'), ..._logs.map((s)=>ListTile(dense:true,leading:const Icon(Icons.history),title:Text(s))),
     ]));

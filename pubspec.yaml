@@ -1,7 +1,7 @@
 name: gps_net_monitor
 description: GPS and mobile network monitor for riders.
 publish_to: 'none'
-version: 1.0.4+5
+version: 1.0.5+6
 environment:
   sdk: '>=3.3.0 <4.0.0'
 dependencies:

@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.location.GnssStatus
 import android.location.LocationManager
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.telephony.TelephonyManager
@@ -41,12 +42,82 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
-                if (call.method == "getNativeStatus") {
-                    result.success(readNativeStatus())
-                } else {
-                    result.notImplemented()
+                when (call.method) {
+                    "getNativeStatus" -> result.success(readNativeStatus())
+                    "refreshAgps" -> result.success(refreshAgpsCommands())
+                    "resetAgps" -> result.success(resetAgpsData())
+                    else -> result.notImplemented()
                 }
             }
+    }
+
+    @SuppressLint("MissingPermission")
+    @Suppress("DEPRECATION")
+    private fun refreshAgpsCommands(): Map<String, Any?> {
+        val fineLocationGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!fineLocationGranted) {
+            return mapOf("ok" to false, "message" to "ต้องอนุญาตตำแหน่งแบบแม่นยำก่อน")
+        }
+        return try {
+            val manager = getSystemService(LOCATION_SERVICE) as LocationManager
+            if (!manager.allProviders.contains(LocationManager.GPS_PROVIDER)) {
+                return mapOf("ok" to false, "message" to "อุปกรณ์ไม่เปิดเผย GPS provider")
+            }
+            if (!manager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                return mapOf("ok" to false, "message" to "กรุณาเปิดบริการตำแหน่ง/GPS ก่อน")
+            }
+            // Provider-specific extension commands. Some OEM providers may ignore them.
+            try {
+                manager.sendExtraCommand(LocationManager.GPS_PROVIDER, "force_time_injection", Bundle())
+            } catch (_: RuntimeException) {
+                // Continue to attempt the XTRA request independently.
+            }
+            try {
+                manager.sendExtraCommand(LocationManager.GPS_PROVIDER, "force_xtra_injection", Bundle())
+            } catch (_: RuntimeException) {
+                return mapOf(
+                    "ok" to false,
+                    "message" to "ส่งคำสั่ง A-GPS ไม่สำเร็จ ผู้ให้บริการ GPS อาจไม่รองรับ"
+                )
+            }
+            mapOf(
+                "ok" to true,
+                "message" to "ส่งคำขออัปเดตเวลาและ A-GPS แล้ว แต่ Android ไม่ยืนยันว่าดาวน์โหลดข้อมูลสำเร็จ ให้เปิดเน็ตและรอสักครู่"
+            )
+        } catch (_: SecurityException) {
+            mapOf("ok" to false, "message" to "Android ปฏิเสธสิทธิ์คำสั่งตำแหน่ง")
+        } catch (_: RuntimeException) {
+            mapOf("ok" to false, "message" to "ส่งคำสั่งไม่ได้ในอุปกรณ์นี้")
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    @Suppress("DEPRECATION")
+    private fun resetAgpsData(): Map<String, Any?> {
+        val fineLocationGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!fineLocationGranted) {
+            return mapOf("ok" to false, "message" to "ต้องอนุญาตตำแหน่งแบบแม่นยำก่อน")
+        }
+        return try {
+            val manager = getSystemService(LOCATION_SERVICE) as LocationManager
+            if (!manager.allProviders.contains(LocationManager.GPS_PROVIDER)) {
+                return mapOf("ok" to false, "message" to "อุปกรณ์ไม่เปิดเผย GPS provider")
+            }
+            // A null extras bundle means provider-defined deletion of all aiding data.
+            manager.sendExtraCommand(LocationManager.GPS_PROVIDER, "delete_aiding_data", null)
+            mapOf(
+                "ok" to true,
+                "message" to "ส่งคำขอล้างข้อมูลช่วย GPS แล้ว แต่ผู้ให้บริการอาจไม่รองรับ การจับตำแหน่งครั้งถัดไปอาจช้าลง"
+            )
+        } catch (_: SecurityException) {
+            mapOf("ok" to false, "message" to "Android ปฏิเสธสิทธิ์คำสั่งตำแหน่ง")
+        } catch (_: RuntimeException) {
+            mapOf("ok" to false, "message" to "ล้างข้อมูลช่วย GPS ไม่สำเร็จในอุปกรณ์นี้")
+        }
     }
 
     @SuppressLint("MissingPermission")
