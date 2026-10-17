@@ -10,11 +10,13 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'foreground_service.dart';
+import 'notification_service.dart';
 
 const githubRepo = 'kwanene08-ux/gps-net-monitor'; // เปลี่ยนเป็น owner/repo ของคุณ
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.init();
   FlutterForegroundTask.initCommunicationPort();
   FlutterForegroundTask.init(
     androidNotificationOptions: AndroidNotificationOptions(
@@ -58,7 +60,21 @@ class _DashboardState extends State<Dashboard> {
   }
 
   void _onReceiveTaskData(Object d) {
-    if (d is Map && mounted) {
+    if (d is! Map) return;
+
+    if (d['event'] == 'gps_jump_rejected') {
+      unawaited(
+        NotificationService.alert(
+          'ตรวจพบ GPS กระโดด',
+          'ระบบปฏิเสธตำแหน่งที่ผิดปกติแล้ว',
+        ).catchError((Object error) {
+          debugPrint('GPS alert failed: $error');
+        }),
+      );
+      return;
+    }
+
+    if (mounted) {
       setState(() => _data = Map<String, dynamic>.from(d));
     }
   }
@@ -121,11 +137,29 @@ class _DashboardState extends State<Dashboard> {
     final accuracy = (_data['accuracy'] as num?)?.toDouble(); final dbm = _data['dbm'] as int?;
     final gpsScore = accuracy == null ? 0 : accuracy <= 5 ? 50 : accuracy <= 15 ? 35 : accuracy <= 30 ? 15 : 0;
     final netScore = dbm == null ? 0 : dbm >= -80 ? 50 : dbm >= -100 ? 35 : dbm >= -110 ? 15 : 0;
-    final score = gpsScore + netScore; final color = score >= 80 ? Colors.green : score >= 50 ? Colors.orange : Colors.red;
-    final status = score >= 80 ? 'พร้อมวิ่ง' : score >= 50 ? 'ระวัง' : 'หยุดก่อน';
+    final gpsFresh = _data['gpsFresh'] == true;
+    final score = gpsScore + netScore;
+    final color = !gpsFresh
+        ? Colors.grey
+        : score >= 80
+            ? Colors.green
+            : score >= 50
+                ? Colors.orange
+                : Colors.red;
+    final status = !gpsFresh
+        ? (_data['gpsStatus'] == 'ข้อมูล GPS เก่า'
+            ? 'GPS ข้อมูลเก่า'
+            : 'รอ GPS')
+        : score >= 80
+            ? 'พร้อมวิ่ง'
+            : score >= 50
+                ? 'ระวัง'
+                : 'ตรวจสอบ GPS/สัญญาณ';
     return Scaffold(appBar: AppBar(title: const Text('GPS Net Monitor'), actions:[IconButton(onPressed:()=>_settings('app'), icon:const Icon(Icons.settings))]), body: ListView(padding: const EdgeInsets.all(16), children:[
-      Card(color:color.withOpacity(.12), child: Padding(padding:const EdgeInsets.all(18), child:Row(children:[Icon(Icons.circle,color:color,size:20),const SizedBox(width:10),Expanded(child:Text(status,style:Theme.of(context).textTheme.titleLarge)),Text('$score / 100',style:Theme.of(context).textTheme.titleLarge)]))),
-      _card('🛰️ GPS', [ 'ดาวเทียม: ${_data['satellites'] ?? 'N/A'}', 'Accuracy: ${accuracy == null ? 'N/A' : '±${accuracy.toStringAsFixed(1)} ม.'}', 'ความเร็ว: ${_data['speedKmh'] == null ? 'N/A' : '${(_data['speedKmh'] as num).toStringAsFixed(1)} กม./ชม.'}', 'Latitude: ${_data['latitude'] ?? 'N/A'}', 'Longitude: ${_data['longitude'] ?? 'N/A'}', 'Provider: ${_data['provider'] ?? 'gps (รอข้อมูล)'}' ]),
+      Card(color:color.withOpacity(.12), child: Padding(padding:const EdgeInsets.all(18), child:Row(children:[Icon(Icons.circle,color:color,size:20),const SizedBox(width:10),Expanded(child:Text(status,style:Theme.of(context).textTheme.titleLarge)),Text(gpsFresh ? '$score / 100' : 'N/A',style:Theme.of(context).textTheme.titleLarge)]))),
+      _card('🛰️ GPS', [ 'สถานะ GPS: ${_data['gpsStatus'] ?? 'รอข้อมูล GPS'}',
+        'อายุข้อมูล: ${_data['ageSeconds'] == null ? 'N/A' : '${_data['ageSeconds']} วินาที'}',
+        'ดาวเทียม: ${_data['satellites'] ?? 'N/A'}', 'Accuracy: ${accuracy == null ? 'N/A' : '±${accuracy.toStringAsFixed(1)} ม.'}', 'ความเร็ว: ${_data['speedKmh'] == null ? 'N/A' : '${(_data['speedKmh'] as num).toStringAsFixed(1)} กม./ชม.'}', 'Latitude: ${_data['latitude'] ?? 'N/A'}', 'Longitude: ${_data['longitude'] ?? 'N/A'}', 'Provider: ${_data['provider'] ?? 'gps (รอข้อมูล)'}' ]),
       _card('📶 เครือข่าย', ['ชนิด: ${_data['network'] ?? 'N/A'}','สัญญาณ dBm: ${dbm ?? 'N/A'}','ผู้ให้บริการ: ${_data['carrier'] ?? 'N/A'}','หมายเหตุ: Android อาจไม่อนุญาตให้อ่าน dBm ในบางรุ่น']),
       Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('สถานะบริการ: ${_running ? 'ทำงานเบื้องหลัง' : 'หยุดอยู่'}'),Text('เริ่มมา: ${_started == null ? 'ไม่ทราบ' : _elapsed(DateTime.now().difference(_started!))}'),const SizedBox(height:12),SizedBox(width:double.infinity,height:56,child:FilledButton.icon(style:FilledButton.styleFrom(backgroundColor:_running?Colors.red:Colors.green),onPressed:_startStop,icon:Icon(_running?Icons.stop:Icons.play_arrow),label:Text(_running?'⏹️ หยุดติดตาม':'▶️ เริ่มติดตาม')))]))),
       Wrap(spacing:8,runSpacing:8,children:[OutlinedButton.icon(onPressed:()=>_settings('location'),icon:const Icon(Icons.location_on),label:const Text('ตั้งค่า GPS')),OutlinedButton.icon(onPressed:()=>_settings('app'),icon:const Icon(Icons.battery_saver),label:const Text('ตั้งค่าแอป')),OutlinedButton.icon(onPressed:_checking?null:_checkUpdate,icon:const Icon(Icons.system_update),label:const Text('เช็คอัปเดต'))]),
