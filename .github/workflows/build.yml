@@ -1,0 +1,54 @@
+name: Build APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+      - name: Create Android platform scaffolding if needed
+        run: |
+          if [ ! -f android/settings.gradle ] && [ ! -f android/settings.gradle.kts ]; then
+            cp android/app/src/main/AndroidManifest.xml /tmp/GPSNetManifest.xml
+            cp android/app/src/main/res/xml/file_paths.xml /tmp/GPSNetFilePaths.xml
+            flutter create --platforms=android --project-name gps_net_monitor --org com.gpsnetmonitor .
+            cp /tmp/GPSNetManifest.xml android/app/src/main/AndroidManifest.xml
+            mkdir -p android/app/src/main/res/xml
+            cp /tmp/GPSNetFilePaths.xml android/app/src/main/res/xml/file_paths.xml
+          fi
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Analyze Dart
+        run: flutter analyze
+      - name: Build ARM64 APK
+        run: flutter build apk --release --target-platform android-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gps-net-monitor-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+      - name: Publish versioned release when tag is new
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d'+' -f1)
+          if ! gh release view "v${VERSION}" >/dev/null 2>&1; then
+            gh release create "v${VERSION}" build/app/outputs/flutter-apk/app-release.apk \
+              --title "GPS Net Monitor v${VERSION}" --notes "Build จาก GitHub Actions"
+          else
+            echo "Release v${VERSION} มีแล้ว; ดาวน์โหลด APK จาก Artifacts ของ workflow นี้"
+          fi

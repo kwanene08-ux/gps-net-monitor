@@ -1,0 +1,25 @@
+name: gps_net_monitor
+description: GPS and mobile network monitor for riders.
+publish_to: 'none'
+version: 1.0.0+1
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  geolocator: ^12.0.0
+  connectivity_plus: ^6.0.0
+  flutter_local_notifications: ^17.0.0
+  permission_handler: ^11.3.0
+  flutter_foreground_task: ^8.17.0
+  package_info_plus: ^8.0.0
+  http: ^1.2.0
+  path_provider: ^2.1.0
+  open_filex: ^4.5.0
+  device_info_plus: ^10.1.2
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+flutter:
+  uses-material-design: true
