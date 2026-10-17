@@ -102,16 +102,14 @@ class MainActivity : FlutterActivity() {
                 }
                 result["networkType"] = networkTypeLabel(networkType)
 
-                val dbm: Int? = when {
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> telephony.signalStrength
+                val dbm: Int? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    telephony.signalStrength
                         ?.cellSignalStrengths
                         ?.map { it.dbm }
                         ?.filter { it < 0 && it >= -200 }
                         ?.maxOrNull()
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.P -> telephony.signalStrength
-                        ?.dbm
-                        ?.takeIf { it < 0 && it >= -200 }
-                    else -> null
+                } else {
+                    null
                 }
                 result["dbm"] = dbm
             } catch (_: SecurityException) {
