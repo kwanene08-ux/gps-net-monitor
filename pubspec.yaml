@@ -17,6 +17,9 @@ dependencies:
   path_provider: ^2.1.0
   open_filex: ^4.5.0
   device_info_plus: ^10.1.2
+dependency_overrides:
+  geolocator_android: 4.6.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
