@@ -60,6 +60,9 @@ class _DashboardState extends State<Dashboard> {
   bool _gpsLocked = false;
   bool _gpsLockBusy = false;
   String _gpsLockStatus = 'โหมดล็อก GPS ปิด';
+  bool _cpuLocked = false;
+  bool _cpuLockBusy = false;
+  String _cpuLockStatus = 'โหมดล็อก CPU ปิด';
 
   @override
   void initState() {
@@ -102,7 +105,16 @@ class _DashboardState extends State<Dashboard> {
       final status = await const MethodChannel('gps_net_monitor/native_status')
           .invokeMapMethod<String, dynamic>('getNativeStatus');
       if (!mounted || status == null) return;
-      setState(() => _data = {..._data, ...status});
+      final cpuStatus = await const MethodChannel('gps_net_monitor/native_status')
+          .invokeMapMethod<String, dynamic>('getCpuWakeLockStatus');
+      if (!mounted) return;
+      final locked = cpuStatus?['locked'] == true;
+      final message = (cpuStatus?['message'] ?? 'ไม่ทราบสถานะ CPU').toString();
+      setState(() {
+        _data = {..._data, ...status};
+        _cpuLocked = locked;
+        _cpuLockStatus = message;
+      });
     } catch (e) {
       debugPrint('อ่านสถานะ Android ไม่สำเร็จ: $e');
     } finally {
@@ -112,6 +124,11 @@ class _DashboardState extends State<Dashboard> {
 
   void _onReceiveTaskData(Object d) {
     if (d is! Map) return;
+
+    if (d['event'] == 'service_destroyed') {
+      unawaited(_releaseCpuWakeLock());
+      return;
+    }
 
     if (d['event'] == 'gps_lock_status') {
       if (mounted) {
@@ -148,7 +165,7 @@ class _DashboardState extends State<Dashboard> {
   }
   void _log(String s) { final now = DateTime.now(); _logs.insert(0, '${now.hour.toString().padLeft(2,'0')}:${now.minute.toString().padLeft(2,'0')} $s'); if (_logs.length > 30) _logs.removeLast(); }
   Future<void> _startStop() async {
-    if (_running) { await FlutterForegroundTask.stopService(); setState(() { _running = false; _gpsLocked = false; _gpsLockStatus = 'GPS Lock ปิด: บริการติดตามหยุดแล้ว'; }); _log('หยุดติดตามและปลดล็อก GPS'); return; }
+    if (_running) { await _releaseCpuWakeLock(); await FlutterForegroundTask.stopService(); setState(() { _running = false; _gpsLocked = false; _gpsLockStatus = 'GPS Lock ปิด: บริการติดตามหยุดแล้ว'; }); _log('หยุดติดตามและปลดล็อก GPS'); return; }
     final loc = await Permission.locationWhenInUse.request();
     if (!loc.isGranted) { _snack('ต้องอนุญาตตำแหน่งก่อน'); return; }
     if (Platform.isAndroid) {
@@ -257,7 +274,70 @@ class _DashboardState extends State<Dashboard> {
     }
   }
 
-  Future<void> _runAgpsAction({required bool reset}) async {
+
+  Future<void> _toggleCpuLock() async {
+    if (_cpuLockBusy) return;
+    final enable = !_cpuLocked;
+
+    setState(() {
+      _cpuLockBusy = true;
+      _cpuLockStatus = enable ? 'กำลังล็อก CPU…' : 'กำลังปลดล็อก CPU…';
+    });
+
+    try {
+      final response = await const MethodChannel('gps_net_monitor/native_status')
+          .invokeMapMethod<String, dynamic>(
+        'setCpuWakeLock',
+        {'enabled': enable},
+      );
+
+      if (response == null || response['ok'] != true) {
+        throw Exception(response?['message'] ?? 'Android ไม่ยืนยันผลการทำงาน');
+      }
+
+      final locked = response['locked'] == true;
+      final message = (response['message'] ?? 'ไม่ทราบสถานะ CPU').toString();
+
+      if (mounted) {
+        setState(() {
+          _cpuLocked = locked;
+          _cpuLockStatus = message;
+        });
+      }
+
+      _log(locked ? 'เปิดล็อก CPU' : 'ปลดล็อก CPU');
+      _snack(locked
+          ? 'ล็อก CPU แล้ว โดยจะปลดล็อกอัตโนมัติภายใน 6 ชั่วโมง'
+          : 'ปลดล็อก CPU แล้ว');
+    } catch (e) {
+      if (mounted) {
+        setState(() => _cpuLockStatus = 'ทำรายการไม่สำเร็จ');
+        _snack('เปลี่ยนสถานะ CPU ไม่สำเร็จ: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _cpuLockBusy = false);
+    }
+  }
+
+  Future<void> _releaseCpuWakeLock() async {
+    try {
+      final response = await const MethodChannel('gps_net_monitor/native_status')
+          .invokeMapMethod<String, dynamic>(
+        'setCpuWakeLock',
+        {'enabled': false},
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _cpuLocked = response?['locked'] == true;
+        _cpuLockStatus = (response?['message'] ?? 'ปลดล็อก CPU แล้ว').toString();
+      });
+    } catch (e) {
+      debugPrint('ปลดล็อก CPU ไม่สำเร็จ: $e');
+    }
+  }
+
+Future<void> _runAgpsAction({required bool reset}) async {
     if (_agpsBusy) return;
     if (reset) {
       final confirmed = await showDialog<bool>(
@@ -398,10 +478,12 @@ class _DashboardState extends State<Dashboard> {
         OutlinedButton.icon(onPressed:_checking?null:_checkUpdate,icon:const Icon(Icons.system_update),label:const Text('เช็คอัปเดต')),
         FilledButton.icon(onPressed:_agpsBusy?null:()=>_runAgpsAction(reset:false),icon:const Icon(Icons.satellite_alt),label:const Text('อัปเดต A-GPS')),
         FilledButton.icon(onPressed:_gpsLockBusy?null:_toggleGpsLock,icon:Icon(_gpsLocked?Icons.lock_open:Icons.lock),label:Text(_gpsLockBusy?'กำลังทำงาน…':_gpsLocked?'ปลดล็อก GPS':'ล็อก GPS')),
+        OutlinedButton.icon(onPressed:_cpuLockBusy?null:_toggleCpuLock,icon:Icon(_cpuLocked?Icons.lock:Icons.memory),label:Text(_cpuLockBusy?'กำลังทำงาน…':_cpuLocked?'ปลดล็อก CPU':'ล็อก CPU')),
         OutlinedButton.icon(onPressed:_agpsBusy?null:()=>_runAgpsAction(reset:true),icon:const Icon(Icons.restart_alt),label:const Text('Reset A-GPS')),
       ]),
       Padding(padding:const EdgeInsets.symmetric(vertical:4),child:Text(_agpsStatus,style:const TextStyle(fontSize:12))),
       Padding(padding:const EdgeInsets.symmetric(vertical:4),child:Text('🔒 GPS Lock: $_gpsLockStatus',style:const TextStyle(fontSize:12))),
+        Padding(padding:const EdgeInsets.symmetric(vertical:4),child:Text('🔒 CPU Wake Lock: $_cpuLockStatus',style:const TextStyle(fontSize:12))),
       const Padding(padding:EdgeInsets.only(bottom:6),child:Text('โหมดล็อกจะขอตำแหน่งต่อเนื่องขณะบริการทำงาน อาจใช้แบตเตอรี่มากขึ้น และไม่รับประกันว่า Accuracy จะดีขึ้น',style:TextStyle(fontSize:11))),
       Padding(padding:const EdgeInsets.symmetric(vertical:8),child:Text(_updateText,style:const TextStyle(fontSize:12))),
       Text('📋 ประวัติวันนี้',style:Theme.of(context).textTheme.titleMedium), if(_logs.isEmpty) const Text('ยังไม่มีเหตุการณ์ในเซสชันนี้'), ..._logs.map((s)=>ListTile(dense:true,leading:const Icon(Icons.history),title:Text(s))),

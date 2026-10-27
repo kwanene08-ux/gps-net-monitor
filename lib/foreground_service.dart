@@ -204,6 +204,7 @@ class GpsMonitorTaskHandler extends TaskHandler {
 
   @override
   Future<void> onDestroy(DateTime timestamp) async {
+    FlutterForegroundTask.sendDataToMain({'event': 'service_destroyed'});
     _gpsLocked = false;
     await _gpsSubscription?.cancel();
     _gpsSubscription = null;

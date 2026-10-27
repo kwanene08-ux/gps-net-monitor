@@ -1,12 +1,14 @@
 package com.gpsnetmonitor.gps_net_monitor
 
 import android.Manifest
+import android.content.Context
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.location.GnssStatus
 import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.os.Handler
 import android.os.Looper
 import android.telephony.TelephonyManager
@@ -19,6 +21,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "gps_net_monitor/native_status"
+        private var cpuWakeLock: PowerManager.WakeLock? = null
     }
 
     private var gnssRegistered = false
@@ -46,12 +49,59 @@ class MainActivity : FlutterActivity() {
                     "getNativeStatus" -> result.success(readNativeStatus())
                     "refreshAgps" -> result.success(refreshAgpsCommands())
                     "resetAgps" -> result.success(resetAgpsData())
+                    "getCpuWakeLockStatus" -> result.success(cpuWakeLockStatus())
+                    "setCpuWakeLock" -> result.success(
+                        setCpuWakeLock(call.argument<Boolean>("enabled") == true)
+                    )
                     else -> result.notImplemented()
                 }
             }
     }
 
-    @SuppressLint("MissingPermission")
+
+    private fun cpuWakeLockStatus(): Map<String, Any?> {
+        val locked = cpuWakeLock?.isHeld == true
+        return mapOf(
+            "ok" to true,
+            "locked" to locked,
+            "message" to if (locked)
+                "ล็อก CPU อยู่ (ปลดล็อกอัตโนมัติภายใน 6 ชั่วโมง)"
+            else
+                "โหมดล็อก CPU ปิด"
+        )
+    }
+
+    private fun setCpuWakeLock(enabled: Boolean): Map<String, Any?> {
+        return try {
+            if (enabled) {
+                val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+                val lock = cpuWakeLock ?: powerManager.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "$packageName:GPSNetMonitorCpu"
+                ).also {
+                    it.setReferenceCounted(false)
+                    cpuWakeLock = it
+                }
+                if (!lock.isHeld) {
+                    // Safety timeout: Android releases this lock after six hours.
+                    lock.acquire(6L * 60L * 60L * 1000L)
+                }
+            } else {
+                cpuWakeLock?.let { lock ->
+                    if (lock.isHeld) lock.release()
+                }
+            }
+            cpuWakeLockStatus()
+        } catch (e: Exception) {
+            mapOf(
+                "ok" to false,
+                "locked" to (cpuWakeLock?.isHeld == true),
+                "message" to "ควบคุม CPU Wake Lock ไม่สำเร็จ: ${e.message ?: "เกิดข้อผิดพลาด"}"
+            )
+        }
+    }
+
+@SuppressLint("MissingPermission")
     @Suppress("DEPRECATION")
     private fun refreshAgpsCommands(): Map<String, Any?> {
         val fineLocationGranted = ContextCompat.checkSelfPermission(
