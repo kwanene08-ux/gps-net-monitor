@@ -82,7 +82,7 @@ class _DashboardState extends State<Dashboard> {
             ? 'ข้อมูล GPS เก่า'
             : accuracy == null || !accuracy.isFinite
                 ? 'ไม่มีข้อมูล GPS'
-                : accuracy > 15
+                : accuracy > 10
                     ? 'GPS คลาดเคลื่อน'
                     : 'GPS ดี';
 
@@ -537,7 +537,7 @@ Future<void> _runAgpsAction({required bool reset}) async {
             : 'ข้อมูลเก่า · ±${accuracy.toStringAsFixed(1)} ม.')
         : accuracy == null
             ? 'N/A'
-            : accuracy > 15
+            : accuracy > 10
                 ? 'คลาดเคลื่อน · ±${accuracy.toStringAsFixed(1)} ม.'
                 : '±${accuracy.toStringAsFixed(1)} ม.';
     final score = gpsScore + netScore;
