@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'foreground_service.dart';
+import 'gps_freshness.dart';
 import 'notification_service.dart';
 
 const githubRepo = 'kwanene08-ux/gps-net-monitor'; // เปลี่ยนเป็น owner/repo ของคุณ
@@ -73,18 +74,14 @@ class _DashboardState extends State<Dashboard> {
       final rawFixTime = _data['fixTimestamp'];
       final fixTime = rawFixTime is String ? DateTime.tryParse(rawFixTime) : null;
       if (fixTime != null) {
-        final diff = DateTime.now().difference(fixTime).inSeconds;
-        final age = diff < 0 ? 0 : diff;
-        final fresh = age <= 10;
+        final age = GpsFreshness.ageSeconds(fixTime, DateTime.now())!;
+        final fresh = GpsFreshness.isFresh(age);
         final rawAccuracy = _data['accuracy'];
         final accuracy = rawAccuracy is num ? rawAccuracy.toDouble() : null;
-        final gpsStatus = !fresh
-            ? 'ข้อมูล GPS เก่า'
-            : accuracy == null || !accuracy.isFinite
-                ? 'ไม่มีข้อมูล GPS'
-                : accuracy > 10
-                    ? 'GPS คลาดเคลื่อน'
-                    : 'GPS ดี';
+        final gpsStatus = GpsFreshness.status(
+          ageSeconds: age,
+          accuracy: accuracy,
+        );
 
         if (_data['ageSeconds'] != age ||
             _data['gpsFresh'] != fresh ||
@@ -531,12 +528,14 @@ Future<void> _runAgpsAction({required bool reset}) async {
     final gpsScore = accuracy == null ? 0 : accuracy <= 5 ? 50 : accuracy <= 15 ? 35 : accuracy <= 30 ? 15 : 0;
     final netScore = dbm == null ? 0 : dbm >= -80 ? 50 : dbm >= -100 ? 35 : dbm >= -110 ? 15 : 0;
     final gpsFresh = _data['gpsFresh'] == true;
-    final accuracyText = !gpsFresh
-        ? (accuracy == null
-            ? 'ไม่มีข้อมูล'
-            : 'ข้อมูลเก่า · ±${accuracy.toStringAsFixed(1)} ม.')
-        : accuracy == null
-            ? 'N/A'
+    final rawAge = _data['ageSeconds'];
+    final gpsAge = rawAge is num ? rawAge.toDouble() : null;
+    final accuracyText = accuracy == null ||
+            !accuracy.isFinite ||
+            accuracy < 0
+        ? 'N/A'
+        : gpsAge == null || gpsAge > 10
+            ? 'ข้อมูลเก่า · ±${accuracy.toStringAsFixed(1)} ม.'
             : accuracy > 10
                 ? 'คลาดเคลื่อน · ±${accuracy.toStringAsFixed(1)} ม.'
                 : '±${accuracy.toStringAsFixed(1)} ม.';
@@ -549,9 +548,7 @@ Future<void> _runAgpsAction({required bool reset}) async {
                 ? Colors.orange
                 : Colors.red;
     final status = !gpsFresh
-        ? (_data['gpsStatus'] == 'ข้อมูล GPS เก่า'
-            ? 'GPS ข้อมูลเก่า'
-            : 'รอ GPS')
+        ? (_data['gpsStatus'] ?? 'รอ GPS').toString()
         : score >= 80
             ? 'พร้อมวิ่ง'
             : score >= 50
@@ -560,7 +557,7 @@ Future<void> _runAgpsAction({required bool reset}) async {
     return Scaffold(appBar: AppBar(title: const Text('GPS Net Monitor'), actions:[IconButton(onPressed:()=>_settings('app'), icon:const Icon(Icons.settings))]), body: ListView(padding: const EdgeInsets.all(16), children:[
       Card(color:color.withOpacity(.12), child: Padding(padding:const EdgeInsets.all(18), child:Row(children:[Icon(Icons.circle,color:color,size:20),const SizedBox(width:10),Expanded(child:Text(status,style:Theme.of(context).textTheme.titleLarge)),Text(gpsFresh ? '$score / 100' : 'N/A',style:Theme.of(context).textTheme.titleLarge)]))),
       _card('🛰️ GPS', [ 'สถานะ GPS: ${_data['gpsStatus'] ?? 'รอข้อมูล GPS'}',
-        'อายุข้อมูล: ${_data['ageSeconds'] == null ? 'กำลังรอข้อมูล GPS' : '${_data['ageSeconds']} วินาที'}',
+        'อายุข้อมูล: ${_ageText()}',
         'ดาวเทียม: ${_satelliteText()}', 'Accuracy: $accuracyText', 'ความเร็ว: ${_data['speedKmh'] == null ? 'N/A' : '${(_data['speedKmh'] as num).toStringAsFixed(1)} กม./ชม.'}', 'Latitude: ${_data['latitude'] ?? 'N/A'}', 'Longitude: ${_data['longitude'] ?? 'N/A'}', 'Provider: ${_data['provider'] ?? 'gps (รอข้อมูล)'}' ]),
       _card('📶 เครือข่าย', [
         'อุปกรณ์: ${_data['device'] ?? 'กำลังอ่านข้อมูล…'}',
@@ -616,6 +613,19 @@ Future<void> _runAgpsAction({required bool reset}) async {
       return '${visible.toInt()} ดวง${used is num ? ' (ใช้ ${used.toInt()})' : ''}';
     }
     return (_data['satelliteStatus'] ?? 'กำลังค้นหาดาวเทียม…').toString();
+  }
+
+  String _ageText() {
+    final value = _data['ageSeconds'];
+    if (value is! num || !value.isFinite || value < 0) {
+      return 'กำลังรอข้อมูล GPS';
+    }
+    final age = value.toDouble();
+    final seconds = '${age.toStringAsFixed(1)} วินาที';
+    if (age > 10) return '$seconds (ข้อมูลเก่า)';
+    if (age > 5) return '$seconds (ล่าช้า)';
+    if (age > 3) return '$seconds (เริ่มล่าช้า)';
+    return seconds;
   }
 
   String _elapsed(Duration d) { if(d.inSeconds<0)return '0 นาที'; if(d.inHours>0)return '${d.inHours} ชม. ${d.inMinutes%60} นาที'; return '${d.inMinutes} นาที'; }

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'gps_freshness.dart';
 
 @pragma('vm:entry-point')
 void startCallback() =>
@@ -160,14 +161,11 @@ class GpsMonitorTaskHandler extends TaskHandler {
   Future<void> _publish(Position? p) async {
     final now = DateTime.now();
     final fixTime = p?.timestamp;
-    final ageSeconds = fixTime == null
-        ? null
-        : math.max(0, now.difference(fixTime).inSeconds);
-
-    final isFresh = ageSeconds != null && ageSeconds <= 10;
+    final ageSeconds = GpsFreshness.ageSeconds(fixTime, now);
+    final isFresh = GpsFreshness.isFresh(ageSeconds);
 
     // ป้องกันความเร็วหลอกจาก GPS ที่คลาดเคลื่อนในอาคาร
-    final speedIsReliable = isFresh &&
+    final speedIsReliable = GpsFreshness.canUseSpeed(ageSeconds) &&
         p != null &&
         p.accuracy.isFinite &&
         p.accuracy <= 10 &&
@@ -191,15 +189,10 @@ class GpsMonitorTaskHandler extends TaskHandler {
       'fixTimestamp': fixTime?.toIso8601String(),
       'ageSeconds': ageSeconds,
       'gpsFresh': isFresh,
-      'gpsStatus': p == null
-          ? 'ไม่มีข้อมูล GPS'
-          : !isFresh
-              ? 'ข้อมูล GPS เก่า'
-              : !p.accuracy.isFinite
-                  ? 'Accuracy ใช้ไม่ได้'
-                  : p.accuracy > 10
-                      ? 'GPS คลาดเคลื่อน'
-                      : 'GPS ดี',
+      'gpsStatus': GpsFreshness.status(
+        ageSeconds: ageSeconds,
+        accuracy: p?.accuracy,
+      ),
     };
 
     FlutterForegroundTask.sendDataToMain(data);
@@ -207,7 +200,7 @@ class GpsMonitorTaskHandler extends TaskHandler {
     final acc = p == null
         ? 'N/A'
         : '±${p.accuracy.toStringAsFixed(1)}ม.';
-    final age = ageSeconds == null ? 'ไม่มีข้อมูล' : '${ageSeconds}s';
+    final age = ageSeconds == null ? 'ไม่มีข้อมูล' : '${ageSeconds.toStringAsFixed(1)}s';
 
     await FlutterForegroundTask.updateService(
       notificationTitle: _gpsLocked ? 'GPS Net Monitor — 🔒 ล็อก GPS' : 'GPS Net Monitor',
