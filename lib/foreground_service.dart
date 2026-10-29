@@ -165,7 +165,7 @@ class GpsMonitorTaskHandler extends TaskHandler {
         p.speedAccuracy.isFinite &&
         p.speedAccuracy <= 1.5;
 
-    final speedKmh = speedIsReliable && p != null
+    final speedKmh = speedIsReliable
         ? (p.speed < 0.55 ? 0.0 : p.speed * 3.6)
         : null;
 
