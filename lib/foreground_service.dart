@@ -32,7 +32,7 @@ class GpsMonitorTaskHandler extends TaskHandler {
       try {
         final p = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.best,
-          forceAndroidLocationManager: true,
+          // ใช้ Fused Location Provider หาก Android รองรับ
           timeLimit: const Duration(seconds: 5),
         );
         await _acceptPosition(p);
@@ -104,7 +104,7 @@ class GpsMonitorTaskHandler extends TaskHandler {
           locationSettings: AndroidSettings(
             accuracy: LocationAccuracy.best,
             distanceFilter: 0,
-            forceLocationManager: true,
+            // ใช้ Fused Location Provider หาก Android รองรับ
             intervalDuration: const Duration(seconds: 1),
           ),
         ).listen(
