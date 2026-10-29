@@ -155,13 +155,25 @@ class GpsMonitorTaskHandler extends TaskHandler {
 
     final isFresh = ageSeconds != null && ageSeconds <= 10;
 
+    // ป้องกันความเร็วหลอกจาก GPS ที่คลาดเคลื่อนในอาคาร
+    final speedIsReliable = isFresh &&
+        p != null &&
+        p.accuracy.isFinite &&
+        p.accuracy <= 10 &&
+        p.speed.isFinite &&
+        p.speed >= 0 &&
+        p.speedAccuracy.isFinite &&
+        p.speedAccuracy <= 1.5;
+
+    final speedKmh = speedIsReliable && p != null
+        ? (p.speed < 0.55 ? 0.0 : p.speed * 3.6)
+        : null;
+
     final data = <String, dynamic>{
       'accuracy': p?.accuracy,
       'latitude': p?.latitude,
       'longitude': p?.longitude,
-      'speedKmh': isFresh && p != null
-          ? math.max(0, p.speed * 3.6)
-          : null,
+      'speedKmh': speedKmh,
       'provider': 'gps',
       'network': _network,
       'timestamp': now.toIso8601String(),
