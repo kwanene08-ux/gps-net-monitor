@@ -182,9 +182,13 @@ class GpsMonitorTaskHandler extends TaskHandler {
       'gpsFresh': isFresh,
       'gpsStatus': p == null
           ? 'ไม่มีข้อมูล GPS'
-          : isFresh
-              ? 'ข้อมูล GPS ล่าสุด'
-              : 'ข้อมูล GPS เก่า',
+          : !isFresh
+              ? 'ข้อมูล GPS เก่า'
+              : !p.accuracy.isFinite
+                  ? 'Accuracy ใช้ไม่ได้'
+                  : p.accuracy > 15
+                      ? 'GPS คลาดเคลื่อน'
+                      : 'GPS ดี',
     };
 
     FlutterForegroundTask.sendDataToMain(data);
