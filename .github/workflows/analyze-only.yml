@@ -9,6 +9,7 @@ on:
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - '.github/workflows/analyze-only.yml'
+      - 'android/**'
   workflow_dispatch:
 
 permissions:
@@ -25,6 +26,22 @@ jobs:
           flutter-version: '3.24.5'
           channel: stable
           cache: true
+
+      - name: Create Android platform scaffolding if needed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f android/settings.gradle ] && [ ! -f android/settings.gradle.kts ]; then
+            cp android/app/src/main/AndroidManifest.xml /tmp/GPSNetManifest.xml
+            cp android/app/src/main/res/xml/file_paths.xml /tmp/GPSNetFilePaths.xml
+            cp android/app/src/main/kotlin/com/gpsnetmonitor/gps_net_monitor/MainActivity.kt /tmp/GPSNetMainActivity.kt
+            flutter create --platforms=android --project-name gps_net_monitor --org com.gpsnetmonitor .
+            cp /tmp/GPSNetManifest.xml android/app/src/main/AndroidManifest.xml
+            mkdir -p android/app/src/main/res/xml
+            cp /tmp/GPSNetFilePaths.xml android/app/src/main/res/xml/file_paths.xml
+            mkdir -p android/app/src/main/kotlin/com/gpsnetmonitor/gps_net_monitor
+            cp /tmp/GPSNetMainActivity.kt android/app/src/main/kotlin/com/gpsnetmonitor/gps_net_monitor/MainActivity.kt
+          fi
 
       - name: Install dependencies
         run: flutter pub get
