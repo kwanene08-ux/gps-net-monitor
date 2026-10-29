@@ -15,6 +15,7 @@ class GpsMonitorTaskHandler extends TaskHandler {
   DateTime? _lastAlert;
   StreamSubscription<Position>? _gpsSubscription;
   bool _gpsLocked = false;
+  bool _oneShotBusy = false;
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
@@ -26,18 +27,20 @@ class GpsMonitorTaskHandler extends TaskHandler {
   Future<void> onRepeatEvent(DateTime timestamp) async {
     // In lock mode the continuous stream owns location requests. Otherwise use
     // the original periodic one-shot request to keep the normal mode lighter.
-    if (!_gpsLocked) {
-      Position? p;
+    if (!_gpsLocked && !_oneShotBusy) {
+      _oneShotBusy = true;
       try {
-        p = await Geolocator.getCurrentPosition(
+        final p = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.best,
           forceAndroidLocationManager: true,
           timeLimit: const Duration(seconds: 5),
         );
+        await _acceptPosition(p);
       } catch (_) {
-        // Use the last accepted fix but continue to report its true age.
+        // Keep the last accepted fix and report its real age.
+      } finally {
+        _oneShotBusy = false;
       }
-      await _acceptPosition(p);
     }
 
     if (_lastNetRead == null ||

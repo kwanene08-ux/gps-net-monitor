@@ -571,7 +571,7 @@ Future<void> _runAgpsAction({required bool reset}) async {
       ]),
       Padding(padding:const EdgeInsets.symmetric(vertical:4),child:Text(_agpsStatus,style:const TextStyle(fontSize:12))),
       Padding(padding:const EdgeInsets.symmetric(vertical:4),child:Text('🔒 GPS Lock: $_gpsLockStatus',style:const TextStyle(fontSize:12))),
-      const Padding(padding:EdgeInsets.only(bottom:6),child:Text('โหมดล็อกจะขอตำแหน่งต่อเนื่องขณะบริการทำงาน อาจใช้แบตเตอรี่มากขึ้น และไม่รับประกันว่า Accuracy จะดีขึ้น',style:TextStyle(fontSize:11))),
+      const Padding(padding:EdgeInsets.only(bottom:6),child:Text('โหมดล็อกจะขอตำแหน่งต่อเนื่องขณะบริการทำงาน',style:TextStyle(fontSize:11))),
       Padding(padding:const EdgeInsets.symmetric(vertical:8),child:Text(_updateText,style:const TextStyle(fontSize:12))),
       Text('📋 ประวัติวันนี้',style:Theme.of(context).textTheme.titleMedium), if(_logs.isEmpty) const Text('ยังไม่มีเหตุการณ์ในเซสชันนี้'), ..._logs.map((s)=>ListTile(dense:true,leading:const Icon(Icons.history),title:Text(s))),
     ]));
