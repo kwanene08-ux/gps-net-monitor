@@ -18,7 +18,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     companion object {
-        private const val CHANNEL = "gps_net_monitor/native_status
+        private const val CHANNEL = "gps_net_monitor/native_status"
     }
 
     private var gnssRegistered = false
