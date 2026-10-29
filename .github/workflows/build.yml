@@ -153,6 +153,9 @@ jobs:
       - name: Analyze Dart
         run: flutter analyze
 
+      - name: Test Dart
+        run: flutter test
+
       - name: Build signed ARM64 APK
         run: flutter build apk --release --target-platform android-arm64
 

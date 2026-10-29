@@ -59,7 +59,18 @@ class GpsMonitorTaskHandler extends TaskHandler {
   }
 
   Future<Position?> _acceptPosition(Position? p) async {
-    if (p == null || !p.accuracy.isFinite || p.accuracy > 100) return null;
+    if (p == null ||
+        !p.latitude.isFinite ||
+        !p.longitude.isFinite ||
+        p.latitude < -90 ||
+        p.latitude > 90 ||
+        p.longitude < -180 ||
+        p.longitude > 180 ||
+        !p.accuracy.isFinite ||
+        p.accuracy < 0 ||
+        p.accuracy > 100) {
+      return null;
+    }
     final last = _lastAccepted;
     if (last != null) {
       final seconds = p.timestamp.difference(last.timestamp).inMilliseconds / 1000.0;
@@ -174,7 +185,7 @@ class GpsMonitorTaskHandler extends TaskHandler {
       'latitude': p?.latitude,
       'longitude': p?.longitude,
       'speedKmh': speedKmh,
-      'provider': 'gps',
+      'provider': 'Android Location API',
       'network': _network,
       'timestamp': now.toIso8601String(),
       'fixTimestamp': fixTime?.toIso8601String(),
@@ -186,7 +197,7 @@ class GpsMonitorTaskHandler extends TaskHandler {
               ? 'ข้อมูล GPS เก่า'
               : !p.accuracy.isFinite
                   ? 'Accuracy ใช้ไม่ได้'
-                  : p.accuracy > 15
+                  : p.accuracy > 10
                       ? 'GPS คลาดเคลื่อน'
                       : 'GPS ดี',
     };
