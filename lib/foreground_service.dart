@@ -11,176 +11,165 @@ void startCallback() =>
 class GpsMonitorTaskHandler extends TaskHandler {
   Position? _lastAccepted;
   DateTime? _lastNetRead;
+  DateTime? _lastGpsStartAttempt;
   String _network = 'N/A';
   DateTime? _lastAlert;
   StreamSubscription<Position>? _gpsSubscription;
-  bool _gpsLocked = false;
-  bool _oneShotBusy = false;
+  bool _gpsStarting = false;
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
-    _sendGpsLockStatus('โหมดล็อก GPS ปิด');
+    await _startGpsStream();
     await _publish(null);
+  }
+
+  Future<void> _startGpsStream() async {
+    if (_gpsSubscription != null || _gpsStarting) return;
+
+    final now = DateTime.now();
+    if (_lastGpsStartAttempt != null &&
+        now.difference(_lastGpsStartAttempt!) <
+            const Duration(seconds: 5)) {
+      return;
+    }
+
+    _lastGpsStartAttempt = now;
+    _gpsStarting = true;
+
+    try {
+      final stream = Geolocator.getPositionStream(
+        locationSettings: AndroidSettings(
+          accuracy: LocationAccuracy.best,
+          distanceFilter: 0,
+          intervalDuration: const Duration(seconds: 2),
+        ),
+      );
+
+      _gpsSubscription = stream.listen(
+        (Position position) {
+          unawaited(_handleStreamPosition(position));
+        },
+        onError: (Object error) {
+          unawaited(_handleGpsStreamError());
+        },
+        onDone: () {
+          unawaited(_handleGpsStreamError());
+        },
+      );
+    } catch (_) {
+      _gpsSubscription = null;
+    } finally {
+      _gpsStarting = false;
+    }
+  }
+
+  Future<void> _handleStreamPosition(Position position) async {
+    final accepted = await _acceptPosition(position);
+    if (accepted != null) {
+      await _publish(accepted);
+    }
+  }
+
+  Future<void> _handleGpsStreamError() async {
+    final subscription = _gpsSubscription;
+    if (subscription == null) return;
+
+    _gpsSubscription = null;
+    await subscription.cancel();
   }
 
   @override
   Future<void> onRepeatEvent(DateTime timestamp) async {
-    // In lock mode the continuous stream owns location requests. Otherwise use
-    // the original periodic one-shot request to keep the normal mode lighter.
-    if (!_gpsLocked && !_oneShotBusy) {
-      _oneShotBusy = true;
-      try {
-        final p = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.best,
-          // ใช้ Fused Location Provider หาก Android รองรับ
-          timeLimit: const Duration(seconds: 5),
-        );
-        await _acceptPosition(p);
-      } catch (_) {
-        // Keep the last accepted fix and report its real age.
-      } finally {
-        _oneShotBusy = false;
-      }
+    // ถ้า Stream หยุด ให้ลองเริ่มใหม่โดยเว้นระยะอย่างน้อย 5 วินาที
+    if (_gpsSubscription == null) {
+      await _startGpsStream();
     }
 
+    // ตรวจเครือข่ายแยกจาก GPS ทุกประมาณ 3 วินาที
     if (_lastNetRead == null ||
-        timestamp.difference(_lastNetRead!) >= const Duration(seconds: 3)) {
+        timestamp.difference(_lastNetRead!) >=
+            const Duration(seconds: 3)) {
       try {
-        final c = await Connectivity().checkConnectivity();
-        _network = c.map((e) => e.name).join(', ');
+        final result = await Connectivity().checkConnectivity();
+        _network = result.map((item) => item.name).join(', ');
         if (_network.isEmpty) _network = 'none';
       } catch (_) {
         _network = 'N/A';
       }
-      _lastNetRead = timestamp;
+      _lastNetRead = DateTime.now();
     }
 
+    // ส่งข้อมูลล่าสุดพร้อมอายุจริง ไม่สร้างตำแหน่งใหม่จากข้อมูลเก่า
     await _publish(_lastAccepted);
   }
 
-  Future<Position?> _acceptPosition(Position? p) async {
-    if (p == null ||
-        !p.latitude.isFinite ||
-        !p.longitude.isFinite ||
-        p.latitude < -90 ||
-        p.latitude > 90 ||
-        p.longitude < -180 ||
-        p.longitude > 180 ||
-        !p.accuracy.isFinite ||
-        p.accuracy < 0 ||
-        p.accuracy > 100) {
+  Future<Position?> _acceptPosition(Position? position) async {
+    if (position == null ||
+        !position.latitude.isFinite ||
+        !position.longitude.isFinite ||
+        position.latitude < -90 ||
+        position.latitude > 90 ||
+        position.longitude < -180 ||
+        position.longitude > 180 ||
+        !position.accuracy.isFinite ||
+        position.accuracy < 0) {
       return null;
     }
+
     final last = _lastAccepted;
+
     if (last != null) {
-      final seconds = p.timestamp.difference(last.timestamp).inMilliseconds / 1000.0;
-      final distance = Geolocator.distanceBetween(
-        last.latitude, last.longitude, p.latitude, p.longitude,
-      );
-      if (seconds > 0 && distance / seconds > 60) {
-        await _alertOnce('GPS jump rejected');
-        return null;
-      }
+      final seconds =
+          position.timestamp.difference(last.timestamp).inMilliseconds /
+              1000.0;
+
       if (seconds <= 0) return null;
-    }
-    _lastAccepted = p;
-    return p;
-  }
 
-  Future<void> _handleLockedPosition(Position p) async {
-    if (!_gpsLocked) return;
-    final accepted = await _acceptPosition(p);
-    if (accepted != null) await _publish(accepted);
-  }
-
-  void _sendGpsLockStatus(String status) {
-    FlutterForegroundTask.sendDataToMain({
-      'event': 'gps_lock_status',
-      'locked': _gpsLocked,
-      'status': status,
-    });
-  }
-
-  Future<void> _setGpsLock(bool enabled) async {
-    if (enabled == _gpsLocked) {
-      _sendGpsLockStatus(_gpsLocked
-          ? 'ล็อก GPS อยู่: รับตำแหน่งต่อเนื่อง'
-          : 'โหมดล็อก GPS ปิด');
-      return;
-    }
-
-    if (enabled) {
-      try {
-        _gpsSubscription = Geolocator.getPositionStream(
-          locationSettings: AndroidSettings(
-            accuracy: LocationAccuracy.best,
-            distanceFilter: 0,
-            // ใช้ Fused Location Provider หาก Android รองรับ
-            intervalDuration: const Duration(seconds: 1),
-          ),
-        ).listen(
-          (Position position) => unawaited(_handleLockedPosition(position)),
-          onError: (Object error) => unawaited(_handleGpsStreamError()),
+      // ปฏิเสธการกระโดดเฉพาะเมื่อทั้งตำแหน่งเดิมและใหม่แม่นยำ <= 10 เมตร
+      // ตำแหน่งที่ Accuracy แย่ยังแสดงได้ แต่ไม่เชื่อถือสำหรับความเร็ว
+      if (last.accuracy <= 10 && position.accuracy <= 10) {
+        final distance = Geolocator.distanceBetween(
+          last.latitude,
+          last.longitude,
+          position.latitude,
+          position.longitude,
         );
-        _gpsLocked = true;
-        _sendGpsLockStatus('ล็อก GPS อยู่: รับตำแหน่งต่อเนื่อง');
-      } catch (_) {
-        _gpsLocked = false;
-        _gpsSubscription = null;
-        _sendGpsLockStatus('เปิดโหมดล็อก GPS ไม่สำเร็จ');
-        return;
+
+        if (distance / seconds > 60) {
+          await _alertOnce('GPS jump rejected');
+          return null;
+        }
       }
-    } else {
-      _gpsLocked = false;
-      await _gpsSubscription?.cancel();
-      _gpsSubscription = null;
-      _sendGpsLockStatus('ปลดล็อก GPS แล้ว: กลับไปอ่านตามรอบปกติ');
     }
 
-    await FlutterForegroundTask.updateService(
-      notificationTitle: _gpsLocked ? 'GPS Net Monitor — 🔒 ล็อก GPS' : 'GPS Net Monitor',
-      notificationText: _gpsLocked
-          ? 'ล็อก GPS ต่อเนื่อง | กำลังรับตำแหน่ง…'
-          : 'GPS ตรวจตามรอบปกติ | $_network',
-    );
+    _lastAccepted = position;
+    return position;
   }
 
-  Future<void> _handleGpsStreamError() async {
-    if (!_gpsLocked) return;
-    _gpsLocked = false;
-    await _gpsSubscription?.cancel();
-    _gpsSubscription = null;
-    _sendGpsLockStatus('โหมดล็อก GPS หยุด: รับข้อมูลต่อเนื่องไม่ได้');
-    await FlutterForegroundTask.updateService(
-      notificationTitle: 'GPS Net Monitor',
-      notificationText: 'โหมดล็อก GPS หยุด | $_network',
-    );
-  }
-
-  Future<void> _publish(Position? p) async {
+  Future<void> _publish(Position? position) async {
     final now = DateTime.now();
-    final fixTime = p?.timestamp;
+    final fixTime = position?.timestamp;
     final ageSeconds = GpsFreshness.ageSeconds(fixTime, now);
     final isFresh = GpsFreshness.isFresh(ageSeconds);
 
-    // ป้องกันความเร็วหลอกจาก GPS ที่คลาดเคลื่อนในอาคาร
-    final speedIsReliable = GpsFreshness.canUseSpeed(ageSeconds) &&
-        p != null &&
-        p.accuracy.isFinite &&
-        p.accuracy <= 10 &&
-        p.speed.isFinite &&
-        p.speed >= 0 &&
-        p.speedAccuracy.isFinite &&
-        p.speedAccuracy <= 1.5;
+    final speedIsReliable =
+        GpsFreshness.canUseSpeed(ageSeconds) &&
+        position != null &&
+        position.accuracy.isFinite &&
+        position.accuracy <= 10 &&
+        position.speed.isFinite &&
+        position.speed >= 0 &&
+        position.speedAccuracy.isFinite &&
+        position.speedAccuracy <= 1.5;
 
     final speedKmh = speedIsReliable
-        ? (p.speed < 0.55 ? 0.0 : p.speed * 3.6)
+        ? (position.speed < 0.55 ? 0.0 : position.speed * 3.6)
         : null;
 
     final data = <String, dynamic>{
-      'accuracy': p?.accuracy,
-      'latitude': p?.latitude,
-      'longitude': p?.longitude,
+      'accuracy': position?.accuracy,
+      'latitude': position?.latitude,
+      'longitude': position?.longitude,
       'speedKmh': speedKmh,
       'provider': 'Android Location API',
       'network': _network,
@@ -190,31 +179,34 @@ class GpsMonitorTaskHandler extends TaskHandler {
       'gpsFresh': isFresh,
       'gpsStatus': GpsFreshness.status(
         ageSeconds: ageSeconds,
-        accuracy: p?.accuracy,
+        accuracy: position?.accuracy,
       ),
     };
 
     FlutterForegroundTask.sendDataToMain(data);
 
-    final acc = p == null
+    final accuracyText = position == null
         ? 'N/A'
-        : '±${p.accuracy.toStringAsFixed(1)}ม.';
-    final age = ageSeconds == null ? 'ไม่มีข้อมูล' : '${ageSeconds.toStringAsFixed(1)}s';
+        : '±${position.accuracy.toStringAsFixed(1)} ม.';
+    final ageText = ageSeconds == null
+        ? 'ไม่มีข้อมูล'
+        : '${ageSeconds.toStringAsFixed(1)}s';
 
     await FlutterForegroundTask.updateService(
-      notificationTitle: _gpsLocked ? 'GPS Net Monitor — 🔒 ล็อก GPS' : 'GPS Net Monitor',
-      notificationText: _gpsLocked
-          ? '🔒 GPS $acc | อายุข้อมูล $age | $_network'
-          : 'GPS $acc | อายุข้อมูล $age | $_network',
+      notificationTitle: 'GPS Net Monitor',
+      notificationText:
+          'GPS $accuracyText | อายุข้อมูล $ageText | $_network',
     );
   }
 
   Future<void> _alertOnce(String message) async {
     final now = DateTime.now();
+
     if (_lastAlert != null &&
         now.difference(_lastAlert!) < const Duration(seconds: 30)) {
       return;
     }
+
     _lastAlert = now;
 
     FlutterForegroundTask.sendDataToMain({
@@ -226,30 +218,20 @@ class GpsMonitorTaskHandler extends TaskHandler {
 
   @override
   Future<void> onDestroy(DateTime timestamp) async {
-    FlutterForegroundTask.sendDataToMain({'event': 'service_destroyed'});
-    _gpsLocked = false;
-    await _gpsSubscription?.cancel();
+    final subscription = _gpsSubscription;
     _gpsSubscription = null;
-    _sendGpsLockStatus('GPS Lock ปิด: บริการติดตามหยุดแล้ว');
-  }
+    await subscription?.cancel();
 
-  @override
-  void onReceiveData(Object data) {
-    if (data is! Map) return;
-    if (data['action'] == 'gps_lock_status_request') {
-      _sendGpsLockStatus(_gpsLocked
-          ? 'ล็อก GPS อยู่: รับตำแหน่งต่อเนื่อง'
-          : 'โหมดล็อก GPS ปิด');
-      return;
-    }
-    if (data['action'] == 'gps_lock' && data['enabled'] is bool) {
-      unawaited(_setGpsLock(data['enabled'] as bool));
-    }
+    FlutterForegroundTask.sendDataToMain({
+      'event': 'service_destroyed',
+    });
   }
 
   @override
   void onNotificationButtonPressed(String id) {
-    if (id == 'stop') FlutterForegroundTask.stopService();
+    if (id == 'stop') {
+      FlutterForegroundTask.stopService();
+    }
   }
 
   @override

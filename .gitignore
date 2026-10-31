@@ -1,0 +1,8 @@
+
+# Local backup files - keep out of Git
+*.before-*
+*.pre-*
+
+# Python temporary files
+__pycache__/
+*.py[cod]

@@ -58,9 +58,6 @@ class _DashboardState extends State<Dashboard> {
   bool _nativeBusy = false;
   bool _agpsBusy = false;
   String _agpsStatus = 'ยังไม่ได้สั่งอัปเดต A-GPS';
-  bool _gpsLocked = false;
-  bool _gpsLockBusy = false;
-  String _gpsLockStatus = 'โหมดล็อก GPS ปิด';
   bool _serviceBusy = false;
 
   @override
@@ -123,23 +120,7 @@ class _DashboardState extends State<Dashboard> {
     if (d is! Map) return;
 
     if (d['event'] == 'service_destroyed') {
-      if (mounted) {
-        setState(() {
-          _running = false;
-          _gpsLocked = false;
-          _gpsLockStatus = 'GPS Lock ปิด: บริการติดตามหยุดแล้ว';
-        });
-      }
-      return;
-    }
-
-    if (d['event'] == 'gps_lock_status') {
-      if (mounted) {
-        setState(() {
-          _gpsLocked = d['locked'] == true;
-          _gpsLockStatus = (d['status'] ?? 'สถานะล็อก GPS ไม่ทราบ').toString();
-        });
-      }
+      if (mounted) setState(() => _running = false);
       return;
     }
 
@@ -164,9 +145,6 @@ class _DashboardState extends State<Dashboard> {
       final running = await FlutterForegroundTask.isRunningService;
       if (!mounted) return;
       setState(() => _running = running);
-      if (running) {
-        FlutterForegroundTask.sendDataToTask({'action': 'gps_lock_status_request'});
-      }
     } catch (e) {
       debugPrint('กู้คืนสถานะบริการไม่สำเร็จ: $e');
       _snack('อ่านสถานะบริการไม่สำเร็จ กรุณาลองเปิดแอปใหม่');
@@ -174,7 +152,7 @@ class _DashboardState extends State<Dashboard> {
   }
   void _log(String s) { final now = DateTime.now(); _logs.insert(0, '${now.hour.toString().padLeft(2,'0')}:${now.minute.toString().padLeft(2,'0')} $s'); if (_logs.length > 30) _logs.removeLast(); }
   Future<void> _startStop() async {
-    if (_serviceBusy || _gpsLockBusy) return;
+    if (_serviceBusy) return;
     setState(() => _serviceBusy = true);
     try {
       final serviceRunning = await FlutterForegroundTask.isRunningService;
@@ -183,8 +161,6 @@ class _DashboardState extends State<Dashboard> {
         if (!mounted) return;
         setState(() {
           _running = false;
-          _gpsLocked = false;
-          _gpsLockStatus = 'GPS Lock ปิด: บริการติดตามหยุดแล้ว';
         });
         _log('หยุดติดตาม');
         _snack('หยุดบริการติดตามแล้ว');
@@ -254,92 +230,6 @@ class _DashboardState extends State<Dashboard> {
       _snack('เปิดการตั้งค่าไม่สำเร็จ กรุณาเปิดจากการตั้งค่าโทรศัพท์');
     }
   }
-  Future<void> _toggleGpsLock() async {
-    if (_gpsLockBusy) return;
-    if (_serviceBusy) {
-      _snack('รอให้การเริ่มหรือหยุดบริการเสร็จก่อน');
-      return;
-    }
-    final enable = !_gpsLocked;
-    setState(() {
-      _gpsLockBusy = true;
-      _gpsLockStatus = enable ? 'กำลังเปิดโหมดล็อก GPS…' : 'กำลังปลดล็อก GPS…';
-    });
-    try {
-      final loc = await Permission.locationWhenInUse.request();
-      if (!loc.isGranted) {
-        _snack('ต้องอนุญาตตำแหน่งก่อนใช้โหมดล็อก GPS');
-        return;
-      }
-
-      var running = await FlutterForegroundTask.isRunningService;
-      if (enable && !running) {
-        await Permission.notification.request();
-        if (!(await Permission.phone.status).isGranted) {
-          await Permission.phone.request();
-        }
-        final bg = await Permission.locationAlways.status;
-        if (!bg.isGranted) {
-          _snack('หากต้องการใช้ตอนปิดจอ ให้ตรวจสิทธิ์ตำแหน่งและการทำงานเบื้องหลังของแอป');
-        }
-        final result = await FlutterForegroundTask.startService(
-          serviceId: 7001,
-          notificationTitle: '🟢 GPS Net Monitor — กำลังเปิดล็อก GPS',
-          notificationText: 'กำลังเริ่มบริการตำแหน่ง…',
-          notificationButtons: [const NotificationButton(id: 'stop', text: 'หยุด')],
-          callback: startCallback,
-        );
-        if (result is! ServiceRequestSuccess) {
-          _snack('เริ่มบริการ GPS ไม่สำเร็จ: $result');
-          return;
-        }
-        running = true;
-        if (mounted) {
-          setState(() {
-            _running = true;
-            _started ??= DateTime.now();
-          });
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-      }
-
-      if (!running) {
-        if (mounted) {
-          setState(() {
-            _gpsLocked = false;
-            _gpsLockStatus = 'GPS Lock ปิด: บริการติดตามไม่ได้ทำงาน';
-          });
-        }
-        return;
-      }
-
-      FlutterForegroundTask.sendDataToTask({
-        'action': 'gps_lock',
-        'enabled': enable,
-      });
-      if (mounted) {
-        setState(() {
-          _gpsLocked = enable;
-          _gpsLockStatus = enable
-              ? 'กำลังเปิดรับตำแหน่ง GPS ต่อเนื่อง…'
-              : 'กำลังกลับไปอ่าน GPS ตามรอบปกติ…';
-        });
-      }
-      _log(enable ? 'เปิดโหมดล็อก GPS ต่อเนื่อง' : 'ปิดโหมดล็อก GPS');
-    } catch (e) {
-      final message = 'เปลี่ยนโหมดล็อก GPS ไม่สำเร็จ: $e';
-      if (mounted) {
-        setState(() {
-          _gpsLockStatus = message;
-        });
-        _snack(message);
-      }
-    } finally {
-      if (mounted) setState(() => _gpsLockBusy = false);
-    }
-  }
-
-
 Future<void> _runAgpsAction({required bool reset}) async {
     if (_agpsBusy) return;
     if (reset) {
@@ -559,6 +449,13 @@ Future<void> _runAgpsAction({required bool reset}) async {
       _card('🛰️ GPS', [ 'สถานะ GPS: ${_data['gpsStatus'] ?? 'รอข้อมูล GPS'}',
         'อายุข้อมูล: ${_ageText()}',
         'ดาวเทียม: ${_satelliteText()}', 'Accuracy: $accuracyText', 'ความเร็ว: ${_data['speedKmh'] == null ? 'N/A' : '${(_data['speedKmh'] as num).toStringAsFixed(1)} กม./ชม.'}', 'Latitude: ${_data['latitude'] ?? 'N/A'}', 'Longitude: ${_data['longitude'] ?? 'N/A'}', 'Provider: ${_data['provider'] ?? 'gps (รอข้อมูล)'}' ]),
+      const Padding(
+        padding: EdgeInsets.only(bottom: 8),
+        child: Text(
+          'GPS Stream: รับตำแหน่งต่อเนื่อง (ช่วงเวลาที่ร้องขอ 2 วินาที)',
+          style: TextStyle(fontSize: 12),
+        ),
+      ),
       _card('📶 เครือข่าย', [
         'อุปกรณ์: ${_data['device'] ?? 'กำลังอ่านข้อมูล…'}',
         'ชนิดเครือข่าย: ${_data['networkType'] ?? _data['network'] ?? 'กำลังอ่านข้อมูล…'}',
@@ -577,18 +474,15 @@ Future<void> _runAgpsAction({required bool reset}) async {
         'SNR: ${_radioValue('lteSnr', ' dB')}',
         'TA: ${_radioValue('lteTa')}',
       ]),
-      Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('สถานะบริการ: ${_running ? 'ทำงานเบื้องหลัง' : 'หยุดอยู่'}'),Text('เริ่มมา: ${_started == null ? 'ไม่ทราบ' : _elapsed(DateTime.now().difference(_started!))}'),const SizedBox(height:12),SizedBox(width:double.infinity,height:56,child:FilledButton.icon(style:FilledButton.styleFrom(backgroundColor:_running?Colors.red:Colors.green),onPressed:(_serviceBusy||_gpsLockBusy)?null:_startStop,icon:(_serviceBusy||_gpsLockBusy)?const SizedBox(width:20,height:20,child:CircularProgressIndicator(strokeWidth:2)):Icon(_running?Icons.stop:Icons.play_arrow),label:Text((_serviceBusy||_gpsLockBusy)?'กำลังดำเนินการ…':_running?'⏹️ หยุดติดตาม':'▶️ เริ่มติดตาม')))]))),
+      Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('สถานะบริการ: ${_running ? 'ทำงานเบื้องหลัง' : 'หยุดอยู่'}'),Text('เริ่มมา: ${_started == null ? 'ไม่ทราบ' : _elapsed(DateTime.now().difference(_started!))}'),const SizedBox(height:12),SizedBox(width:double.infinity,height:56,child:FilledButton.icon(style:FilledButton.styleFrom(backgroundColor:_running?Colors.red:Colors.green),onPressed:(_serviceBusy)?null:_startStop,icon:(_serviceBusy)?const SizedBox(width:20,height:20,child:CircularProgressIndicator(strokeWidth:2)):Icon(_running?Icons.stop:Icons.play_arrow),label:Text((_serviceBusy)?'กำลังดำเนินการ…':_running?'⏹️ หยุดติดตาม':'▶️ เริ่มติดตาม')))]))),
       Wrap(spacing:8,runSpacing:8,children:[
         OutlinedButton.icon(onPressed:()=>_settings('location'),icon:const Icon(Icons.location_on),label:const Text('ตั้งค่า GPS')),
         OutlinedButton.icon(onPressed:()=>_settings('app'),icon:const Icon(Icons.battery_saver),label:const Text('ตั้งค่าแอป')),
         OutlinedButton.icon(onPressed:_checking?null:_checkUpdate,icon:const Icon(Icons.system_update),label:const Text('เช็คอัปเดต')),
         FilledButton.icon(onPressed:_agpsBusy?null:()=>_runAgpsAction(reset:false),icon:const Icon(Icons.satellite_alt),label:const Text('อัปเดต A-GPS')),
-        FilledButton.icon(onPressed:_gpsLockBusy?null:_toggleGpsLock,icon:Icon(_gpsLocked?Icons.lock_open:Icons.lock),label:Text(_gpsLockBusy?'กำลังทำงาน…':_gpsLocked?'ปลดล็อก GPS':'ล็อก GPS')),
         OutlinedButton.icon(onPressed:_agpsBusy?null:()=>_runAgpsAction(reset:true),icon:const Icon(Icons.restart_alt),label:const Text('Reset A-GPS')),
       ]),
       Padding(padding:const EdgeInsets.symmetric(vertical:4),child:Text(_agpsStatus,style:const TextStyle(fontSize:12))),
-      Padding(padding:const EdgeInsets.symmetric(vertical:4),child:Text('🔒 GPS Lock: $_gpsLockStatus',style:const TextStyle(fontSize:12))),
-      const Padding(padding:EdgeInsets.only(bottom:6),child:Text('โหมดล็อกจะขอตำแหน่งต่อเนื่องขณะบริการทำงาน',style:TextStyle(fontSize:11))),
       Padding(padding:const EdgeInsets.symmetric(vertical:8),child:Text(_updateText,style:const TextStyle(fontSize:12))),
       Text('📋 ประวัติวันนี้',style:Theme.of(context).textTheme.titleMedium), if(_logs.isEmpty) const Text('ยังไม่มีเหตุการณ์ในเซสชันนี้'), ..._logs.map((s)=>ListTile(dense:true,leading:const Icon(Icons.history),title:Text(s))),
     ]));
