@@ -12,7 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'foreground_service.dart';
 import 'gps_freshness.dart';
-import 'gps_ai_analyzer.dart';
+
 import 'notification_service.dart';
 
 const githubRepo = 'kwanene08-ux/gps-net-monitor'; // เปลี่ยนเป็น owner/repo ของคุณ
@@ -60,7 +60,6 @@ class _DashboardState extends State<Dashboard> {
   bool _agpsBusy = false;
   String _agpsStatus = 'ยังไม่ได้สั่งอัปเดต A-GPS';
   bool _serviceBusy = false;
-  final GpsAiAnalyzer _gpsAiAnalyzer = GpsAiAnalyzer();
 
   @override
   void initState() {
@@ -130,7 +129,7 @@ class _DashboardState extends State<Dashboard> {
       unawaited(
         NotificationService.alert(
           'ตรวจพบ GPS กระโดด',
-          'ระบบปฏิเสธตำแหน่งที่ผิดปกติแล้ว',
+          'ระบบพักตำแหน่งผิดปกติและกำลังรอยืนยัน GPS 2 จุด',
         ).catchError((Object error) {
           debugPrint('GPS alert failed: $error');
         }),
@@ -422,15 +421,6 @@ Future<void> _runAgpsAction({required bool reset}) async {
     final gpsFresh = _data['gpsFresh'] == true;
     final rawAge = _data['ageSeconds'];
     final gpsAge = rawAge is num ? rawAge.toDouble() : null;
-    final rawFixTime = _data['fixTimestamp'];
-    final fixTime = rawFixTime is String
-        ? DateTime.tryParse(rawFixTime)
-        : null;
-    final aiReport = _gpsAiAnalyzer.analyze(
-      now: DateTime.now(),
-      fixTime: fixTime,
-      accuracy: accuracy,
-    );
     final accuracyText = accuracy == null ||
             !accuracy.isFinite ||
             accuracy < 0
@@ -460,25 +450,18 @@ Future<void> _runAgpsAction({required bool reset}) async {
       _card('🛰️ GPS', [ 'สถานะ GPS: ${_data['gpsStatus'] ?? 'รอข้อมูล GPS'}',
         'อายุข้อมูล: ${_ageText()}',
         'ดาวเทียม: ${_satelliteText()}', 'Accuracy: $accuracyText', 'ความเร็ว: ${_data['speedKmh'] == null ? 'N/A' : '${(_data['speedKmh'] as num).toStringAsFixed(1)} กม./ชม.'}', 'Latitude: ${_data['latitude'] ?? 'N/A'}', 'Longitude: ${_data['longitude'] ?? 'N/A'}', 'Provider: ${_data['provider'] ?? 'gps (รอข้อมูล)'}' ]),
-      _card('🧠 GPS AI วิเคราะห์', [
-        'ผลวิเคราะห์: ${aiReport.status}',
-        'รายละเอียด: ${aiReport.detail}',
-        'ตัวอย่างข้อมูล: ${aiReport.sampleCount}/20 จุด',
-        'การทำงาน: วิเคราะห์ภายในเครื่อง',
-      ]),
-      _card('🧠 GPS AI Manager', [
-        'โหมดการเคลื่อนที่: ${_data['aiMotionMode'] ?? 'กำลังประเมิน'}',
-        'ช่วง GPS ที่ร้องขอ: ${_data['aiRequestedIntervalSeconds'] ?? 2} วินาที',
-        'ประวัติสะสม: ${_data['aiHistoryCount'] ?? 0}/720 จุด',
-        'Accuracy เฉลี่ย: ${_data['aiAverageAccuracy'] is num ? '±${(_data['aiAverageAccuracy'] as num).toStringAsFixed(1)} ม.' : 'รอข้อมูล'}',
-        'แนวโน้ม: ${_data['aiAccuracyTrend'] ?? 'ข้อมูลยังไม่เพียงพอ'}',
-        'สถานะ: ${_data['aiQualityStatus'] ?? 'กำลังเรียนรู้ข้อมูล GPS'}',
-        'ประมวลผลในเครื่อง • ไม่บันทึกพิกัด',
+      _card('🛡️ ระบบป้องกัน GPS กระโดด', [
+        'สถานะ: ${_data['gpsFilterStatus'] ?? 'รอข้อมูล GPS'}',
+        'จุดที่รอยืนยัน: ${_data['gpsJumpPending'] == true ? 'มี 1 จุด' : 'ไม่มี'}',
+        'การยืนยันตำแหน่ง: ${_data['gpsJumpConfirmations'] ?? 0}/2 จุด',
+        'จำนวนจุดผิดปกติที่ตรวจพบ: ${_data['gpsJumpRejectedCount'] ?? 0}',
+        'ช่วงรับ GPS: ${_data['gpsIntervalSeconds'] ?? 2} วินาที',
+        'กรองตำแหน่งภายในเครื่อง • ไม่สร้างพิกัดใหม่',
       ]),
       const Padding(
         padding: EdgeInsets.only(bottom: 8),
         child: Text(
-          'GPS Stream: รับตำแหน่งต่อเนื่อง (ช่วงเวลาที่ร้องขอปรับตาม AI)',
+          'GPS Stream: รับตำแหน่งต่อเนื่อง (ช่วงคงที่ 2 วินาที พร้อมตัวกรอง GPS กระโดด)',
           style: TextStyle(fontSize: 12),
         ),
       ),
