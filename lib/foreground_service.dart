@@ -55,7 +55,7 @@ class GpsMonitorTaskHandler extends TaskHandler {
         locationSettings: AndroidSettings(
           accuracy: LocationAccuracy.best,
           distanceFilter: 0,
-          intervalDuration: Duration(
+          intervalDuration: const Duration(
             seconds: _gpsIntervalSeconds,
           ),
         ),
