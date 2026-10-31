@@ -6,12 +6,16 @@ class GpsFixSample {
   final double longitude;
   final double accuracy;
   final DateTime timestamp;
+  final double? speedMetersPerSecond;
+  final double? speedAccuracyMetersPerSecond;
 
   const GpsFixSample({
     required this.latitude,
     required this.longitude,
     required this.accuracy,
     required this.timestamp,
+    this.speedMetersPerSecond,
+    this.speedAccuracyMetersPerSecond,
   });
 
   bool get isValid =>
@@ -29,21 +33,29 @@ class GpsAntiJumpDecision {
   final bool accepted;
   final bool jumpDetected;
   final bool reacquired;
+  final double? distanceMeters;
+  final double? allowedDistanceMeters;
+  final int requiredConfirmations;
+  final int confirmationCount;
+  final String reason;
 
   const GpsAntiJumpDecision({
     required this.accepted,
     this.jumpDetected = false,
     this.reacquired = false,
+    this.distanceMeters,
+    this.allowedDistanceMeters,
+    this.requiredConfirmations = 2,
+    this.confirmationCount = 0,
+    this.reason = '',
   });
 }
 
-/// กรอง GPS Fix ที่เคลื่อนที่ผิดปกติ
-///
-/// จุดที่ผิดปกติจะไม่ถูกส่งไปแสดงทันที
-/// ต้องมี Fix ถัดไปที่สอดคล้องกับจุดต้องสงสัยก่อน จึงยืนยันตำแหน่งใหม่
+/// ตัวกรอง GPS กระโดดแบบยืนยันหลาย Fix
+/// ไม่สร้างพิกัดใหม่ ไม่เฉลี่ยพิกัด และไม่ทำ Road snapping
 class GpsAntiJumpFilter {
   static const double maxSpeedMetersPerSecond = 35.0;
-  static const int requiredConsistentFixes = 2;
+  static const int candidateTimeoutSeconds = 8;
 
   static const double _earthRadiusMeters = 6371000.0;
   static const double _minAccuracyMarginMeters = 8.0;
@@ -53,104 +65,172 @@ class GpsAntiJumpFilter {
   GpsFixSample? _pending;
   DateTime? _lastInputTimestamp;
 
+  int _pendingConfirmations = 0;
+  int _pendingRequired = 2;
   int _rejectedCount = 0;
+
   String _status = 'รอข้อมูล GPS';
+  String _reason = 'รอ GPS Fix';
+  double? _lastDistance;
+  double? _lastAllowedDistance;
 
   String get status => _status;
   bool get isPending => _pending != null;
-  int get confirmationCount => _pending == null ? 0 : 1;
+  int get confirmationCount => _pendingConfirmations;
+  int get requiredConfirmations => _pendingRequired;
   int get rejectedCount => _rejectedCount;
+  double? get lastDistanceMeters => _lastDistance;
+  double? get lastAllowedDistanceMeters => _lastAllowedDistance;
+  String get lastReason => _reason;
 
   GpsAntiJumpDecision evaluate(GpsFixSample sample) {
     if (!sample.isValid) {
       _status = 'GPS Fix ไม่ถูกต้อง';
-      return const GpsAntiJumpDecision(accepted: false);
+      _reason = 'พิกัดหรือ Accuracy ไม่ถูกต้อง';
+      return _decision(false, reason: _reason);
     }
 
     final previousInputTime = _lastInputTimestamp;
     if (previousInputTime != null &&
         !sample.timestamp.isAfter(previousInputTime)) {
       _status = 'ละเว้น GPS Fix ซ้ำหรือย้อนหลัง';
-      return const GpsAntiJumpDecision(accepted: false);
+      _reason = 'เวลา GPS ซ้ำหรือย้อนหลัง';
+      return _decision(false, reason: _reason);
     }
-
     _lastInputTimestamp = sample.timestamp;
 
     final anchor = _anchor;
     if (anchor == null) {
       _anchor = sample;
+      _clearPending();
       _status = 'ติดตาม GPS ปกติ';
-      return const GpsAntiJumpDecision(accepted: true);
+      _reason = 'รับ GPS Fix แรก';
+      return _decision(true, reason: _reason);
     }
 
     final seconds =
-        sample.timestamp.difference(anchor.timestamp).inMilliseconds /
-            1000.0;
-
+        sample.timestamp.difference(anchor.timestamp).inMilliseconds / 1000.0;
     if (!seconds.isFinite || seconds <= 0) {
       _status = 'ละเว้นเวลา GPS ที่ผิดปกติ';
-      return const GpsAntiJumpDecision(accepted: false);
+      _reason = 'ช่วงเวลา GPS ไม่ถูกต้อง';
+      return _decision(false, reason: _reason);
     }
 
     final distance = _distanceMeters(anchor, sample);
-    final maximumDistance = _maximumPlausibleDistance(
-      anchor,
-      sample,
-      seconds,
-    );
+    final allowed = _maximumPlausibleDistance(anchor, sample, seconds);
+    _lastDistance = distance;
+    _lastAllowedDistance = allowed;
 
-    // จุดใหม่ยังต่อเนื่องกับตำแหน่งเดิม:
-    // รับตำแหน่งและยกเลิกจุดต้องสงสัยที่ค้างอยู่
-    if (distance <= maximumDistance) {
-      final wasPending = _pending != null;
+    // ถ้าตำแหน่งกลับมาอยู่ในระยะที่เป็นไปได้จาก Anchor เดิม
+    // ให้ยกเลิก Candidate ที่ค้างไว้
+    if (distance <= allowed) {
+      final hadPending = isPending;
       _anchor = sample;
-      _pending = null;
-      _status = wasPending
+      _clearPending();
+      _status = hadPending
           ? 'กลับสู่ตำแหน่งเดิม ยกเลิกจุดกระโดด'
           : 'ติดตาม GPS ปกติ';
-
-      return const GpsAntiJumpDecision(accepted: true);
+      _reason = hadPending
+          ? 'ตำแหน่งกลับมาเชื่อมต่อกับจุดเดิม'
+          : 'ระยะเคลื่อนที่อยู่ในเกณฑ์';
+      return _decision(
+        true,
+        distance: distance,
+        allowed: allowed,
+        reason: _reason,
+      );
     }
 
-    // ตำแหน่งกระโดดจาก Anchor เดิม:
-    // ตรวจว่ามี Fix ใหม่ที่เคลื่อนต่อเนื่องจากจุดต้องสงสัยหรือไม่
     final pending = _pending;
     if (pending != null) {
-      final pendingSeconds =
+      final pendingAge =
           sample.timestamp.difference(pending.timestamp).inMilliseconds /
               1000.0;
 
-      if (pendingSeconds > 0 && pendingSeconds.isFinite) {
+      if (pendingAge > candidateTimeoutSeconds || pendingAge <= 0) {
+        _clearPending();
+        _reason = 'Candidate เดิมหมดเวลา ต้องเริ่มยืนยันใหม่';
+      } else {
         final pendingDistance = _distanceMeters(pending, sample);
-        final pendingMaximum = _maximumPlausibleDistance(
-          pending,
-          sample,
-          pendingSeconds,
-        );
+        final pendingAllowed =
+            _maximumPlausibleDistance(pending, sample, pendingAge);
 
-        if (pendingDistance <= pendingMaximum) {
-          _anchor = sample;
-          _pending = null;
-          _status = 'ยืนยันตำแหน่งใหม่แล้ว';
+        if (pendingDistance <= pendingAllowed) {
+          _pendingConfirmations++;
+          _pendingRequired = _requiredFor(sample, pending);
 
-          return const GpsAntiJumpDecision(
-            accepted: true,
-            reacquired: true,
+          if (_pendingConfirmations >= _pendingRequired) {
+            _anchor = sample;
+            _clearPending();
+            _status = 'ยืนยันตำแหน่งใหม่แล้ว';
+            _reason = 'GPS Fix ต่อเนื่องครบจำนวนที่กำหนด';
+            return _decision(
+              true,
+              reacquired: true,
+              distance: distance,
+              allowed: allowed,
+              reason: _reason,
+            );
+          }
+
+          _pending = sample;
+          _status = 'กำลังยืนยันตำแหน่งใหม่';
+          _reason = 'Fix สอดคล้องกัน แต่ยังยืนยันไม่ครบ';
+          _lastDistance = pendingDistance;
+          _lastAllowedDistance = pendingAllowed;
+          return _decision(
+            false,
+            jump: true,
+            distance: pendingDistance,
+            allowed: pendingAllowed,
+            reason: _reason,
           );
         }
       }
     }
 
-    // ยังไม่มี Fix ที่ยืนยันได้:
-    // พักจุดนี้ไว้ ไม่ส่งเป็นตำแหน่งที่ยอมรับ
-    _rejectedCount++;
     _pending = sample;
-    _status = 'พบ GPS กระโดด กำลังรอยืนยัน 2 จุด';
+    _pendingConfirmations = 1;
+    _pendingRequired = _requiredFor(sample, anchor);
+    _rejectedCount++;
+    _status = 'พบ GPS กระโดด กำลังรอยืนยัน';
+    _reason = 'ระยะจากจุดเดิมเกินขีดจำกัด';
 
-    return const GpsAntiJumpDecision(
-      accepted: false,
-      jumpDetected: true,
+    return _decision(
+      false,
+      jump: true,
+      distance: distance,
+      allowed: allowed,
+      reason: _reason,
     );
+  }
+
+  int _requiredFor(GpsFixSample current, GpsFixSample previous) {
+    final speed = current.speedMetersPerSecond;
+    final speedAccuracy = current.speedAccuracyMetersPerSecond;
+
+    final reliableSpeed = speed != null &&
+        speed.isFinite &&
+        speed >= 0 &&
+        speedAccuracy != null &&
+        speedAccuracy.isFinite &&
+        speedAccuracy >= 0 &&
+        speedAccuracy <= 1.5;
+
+    final stationaryEvidence = reliableSpeed &&
+        speed <= 0.7 &&
+        current.accuracy <= 10 &&
+        previous.accuracy <= 10;
+
+    // Fix คุณภาพต่ำหรือมีหลักฐานว่าอยู่นิ่ง ต้องยืนยัน 3 จุด
+    if (current.accuracy > 10 ||
+        previous.accuracy > 10 ||
+        stationaryEvidence) {
+      return 3;
+    }
+
+    // ความเร็วเป็นข้อมูลประกอบ ไม่ใช้ปฏิเสธ GPS โดยลำพัง
+    return 2;
   }
 
   double _maximumPlausibleDistance(
@@ -158,14 +238,38 @@ class GpsAntiJumpFilter {
     GpsFixSample second,
     double seconds,
   ) {
-    final accuracyMargin = (
-      (first.accuracy + second.accuracy) * 1.5
-    ).clamp(
-      _minAccuracyMarginMeters,
-      _maxAccuracyMarginMeters,
-    ).toDouble();
+    final accuracyMargin =
+        ((first.accuracy + second.accuracy) * 1.5)
+            .clamp(_minAccuracyMarginMeters, _maxAccuracyMarginMeters)
+            .toDouble();
 
     return maxSpeedMetersPerSecond * seconds + accuracyMargin;
+  }
+
+  GpsAntiJumpDecision _decision(
+    bool accepted, {
+    bool jump = false,
+    bool reacquired = false,
+    double? distance,
+    double? allowed,
+    required String reason,
+  }) {
+    return GpsAntiJumpDecision(
+      accepted: accepted,
+      jumpDetected: jump,
+      reacquired: reacquired,
+      distanceMeters: distance,
+      allowedDistanceMeters: allowed,
+      requiredConfirmations: _pendingRequired,
+      confirmationCount: _pendingConfirmations,
+      reason: reason,
+    );
+  }
+
+  void _clearPending() {
+    _pending = null;
+    _pendingConfirmations = 0;
+    _pendingRequired = 2;
   }
 
   double _distanceMeters(GpsFixSample first, GpsFixSample second) {
@@ -176,18 +280,11 @@ class GpsAntiJumpFilter {
 
     final sinLat = math.sin(deltaLat / 2);
     final sinLon = math.sin(deltaLon / 2);
-
     final value = sinLat * sinLat +
-        math.cos(lat1) *
-            math.cos(lat2) *
-            sinLon *
-            sinLon;
-
+        math.cos(lat1) * math.cos(lat2) * sinLon * sinLon;
     final bounded = value.clamp(0.0, 1.0).toDouble();
 
-    return 2 *
-        _earthRadiusMeters *
-        math.asin(math.sqrt(bounded));
+    return 2 * _earthRadiusMeters * math.asin(math.sqrt(bounded));
   }
 
   double _toRadians(double degrees) => degrees * math.pi / 180.0;

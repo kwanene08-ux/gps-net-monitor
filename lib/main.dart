@@ -453,7 +453,10 @@ Future<void> _runAgpsAction({required bool reset}) async {
       _card('🛡️ ระบบป้องกัน GPS กระโดด', [
         'สถานะ: ${_data['gpsFilterStatus'] ?? 'รอข้อมูล GPS'}',
         'จุดที่รอยืนยัน: ${_data['gpsJumpPending'] == true ? 'มี 1 จุด' : 'ไม่มี'}',
-        'การยืนยันตำแหน่ง: ${_data['gpsJumpConfirmations'] ?? 0}/2 จุด',
+        'การยืนยันตำแหน่ง: ${_data['gpsJumpConfirmations'] ?? 0}/${_data['gpsJumpRequiredConfirmations'] ?? 2} จุด',
+        'ระยะที่ตรวจพบ: ${_data['gpsJumpDistanceMeters'] == null ? 'N/A' : '${(_data['gpsJumpDistanceMeters'] as num).toStringAsFixed(1)} ม.'}',
+        'ระยะที่อนุญาต: ${_data['gpsJumpAllowedMeters'] == null ? 'N/A' : '${(_data['gpsJumpAllowedMeters'] as num).toStringAsFixed(1)} ม.'}',
+        'เหตุผล: ${_data['gpsJumpReason'] ?? 'รอข้อมูล'}',
         'จำนวนจุดผิดปกติที่ตรวจพบ: ${_data['gpsJumpRejectedCount'] ?? 0}',
         'ช่วงรับ GPS: ${_data['gpsIntervalSeconds'] ?? 2} วินาที',
         'กรองตำแหน่งภายในเครื่อง • ไม่สร้างพิกัดใหม่',

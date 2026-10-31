@@ -184,6 +184,8 @@ class GpsMonitorTaskHandler extends TaskHandler {
         longitude: position.longitude,
         accuracy: position.accuracy,
         timestamp: position.timestamp,
+        speedMetersPerSecond: position.speed,
+        speedAccuracyMetersPerSecond: position.speedAccuracy,
       ),
     );
 
@@ -223,6 +225,10 @@ class GpsMonitorTaskHandler extends TaskHandler {
       'gpsJumpPending': _antiJumpFilter.isPending,
       'gpsJumpConfirmations': _antiJumpFilter.confirmationCount,
       'gpsJumpRejectedCount': _antiJumpFilter.rejectedCount,
+      'gpsJumpDistanceMeters': _antiJumpFilter.lastDistanceMeters,
+      'gpsJumpAllowedMeters': _antiJumpFilter.lastAllowedDistanceMeters,
+      'gpsJumpReason': _antiJumpFilter.lastReason,
+      'gpsJumpRequiredConfirmations': _antiJumpFilter.requiredConfirmations,
       'gpsIntervalSeconds': _gpsIntervalSeconds,
       'accuracy': position?.accuracy,
       'latitude': position?.latitude,
