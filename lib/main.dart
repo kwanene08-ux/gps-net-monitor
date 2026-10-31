@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'foreground_service.dart';
 import 'gps_freshness.dart';
+import 'gps_ai_analyzer.dart';
 import 'notification_service.dart';
 
 const githubRepo = 'kwanene08-ux/gps-net-monitor'; // เปลี่ยนเป็น owner/repo ของคุณ
@@ -59,6 +60,7 @@ class _DashboardState extends State<Dashboard> {
   bool _agpsBusy = false;
   String _agpsStatus = 'ยังไม่ได้สั่งอัปเดต A-GPS';
   bool _serviceBusy = false;
+  final GpsAiAnalyzer _gpsAiAnalyzer = GpsAiAnalyzer();
 
   @override
   void initState() {
@@ -420,6 +422,15 @@ Future<void> _runAgpsAction({required bool reset}) async {
     final gpsFresh = _data['gpsFresh'] == true;
     final rawAge = _data['ageSeconds'];
     final gpsAge = rawAge is num ? rawAge.toDouble() : null;
+    final rawFixTime = _data['fixTimestamp'];
+    final fixTime = rawFixTime is String
+        ? DateTime.tryParse(rawFixTime)
+        : null;
+    final aiReport = _gpsAiAnalyzer.analyze(
+      now: DateTime.now(),
+      fixTime: fixTime,
+      accuracy: accuracy,
+    );
     final accuracyText = accuracy == null ||
             !accuracy.isFinite ||
             accuracy < 0
@@ -449,6 +460,12 @@ Future<void> _runAgpsAction({required bool reset}) async {
       _card('🛰️ GPS', [ 'สถานะ GPS: ${_data['gpsStatus'] ?? 'รอข้อมูล GPS'}',
         'อายุข้อมูล: ${_ageText()}',
         'ดาวเทียม: ${_satelliteText()}', 'Accuracy: $accuracyText', 'ความเร็ว: ${_data['speedKmh'] == null ? 'N/A' : '${(_data['speedKmh'] as num).toStringAsFixed(1)} กม./ชม.'}', 'Latitude: ${_data['latitude'] ?? 'N/A'}', 'Longitude: ${_data['longitude'] ?? 'N/A'}', 'Provider: ${_data['provider'] ?? 'gps (รอข้อมูล)'}' ]),
+      _card('🧠 GPS AI วิเคราะห์', [
+        'ผลวิเคราะห์: ${aiReport.status}',
+        'รายละเอียด: ${aiReport.detail}',
+        'ตัวอย่างข้อมูล: ${aiReport.sampleCount}/20 จุด',
+        'การทำงาน: วิเคราะห์ภายในเครื่อง',
+      ]),
       const Padding(
         padding: EdgeInsets.only(bottom: 8),
         child: Text(
