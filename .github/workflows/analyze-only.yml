@@ -54,3 +54,11 @@ jobs:
 
       - name: Build debug ARM64 APK
         run: flutter build apk --debug --target-platform android-arm64
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GPS-Net-Monitor-v1.3.0-ARM64
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
