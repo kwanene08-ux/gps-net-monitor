@@ -466,10 +466,19 @@ Future<void> _runAgpsAction({required bool reset}) async {
         'ตัวอย่างข้อมูล: ${aiReport.sampleCount}/20 จุด',
         'การทำงาน: วิเคราะห์ภายในเครื่อง',
       ]),
+      _card('🧠 GPS AI Manager', [
+        'โหมดการเคลื่อนที่: ${_data['aiMotionMode'] ?? 'กำลังประเมิน'}',
+        'ช่วง GPS ที่ร้องขอ: ${_data['aiRequestedIntervalSeconds'] ?? 2} วินาที',
+        'ประวัติสะสม: ${_data['aiHistoryCount'] ?? 0}/720 จุด',
+        'Accuracy เฉลี่ย: ${_data['aiAverageAccuracy'] is num ? '±${(_data['aiAverageAccuracy'] as num).toStringAsFixed(1)} ม.' : 'รอข้อมูล'}',
+        'แนวโน้ม: ${_data['aiAccuracyTrend'] ?? 'ข้อมูลยังไม่เพียงพอ'}',
+        'สถานะ: ${_data['aiQualityStatus'] ?? 'กำลังเรียนรู้ข้อมูล GPS'}',
+        'ประมวลผลในเครื่อง • ไม่บันทึกพิกัด',
+      ]),
       const Padding(
         padding: EdgeInsets.only(bottom: 8),
         child: Text(
-          'GPS Stream: รับตำแหน่งต่อเนื่อง (ช่วงเวลาที่ร้องขอ 2 วินาที)',
+          'GPS Stream: รับตำแหน่งต่อเนื่อง (ช่วงเวลาที่ร้องขอปรับตาม AI)',
           style: TextStyle(fontSize: 12),
         ),
       ),
