@@ -30,7 +30,7 @@ void main() async {
     ),
     iosNotificationOptions: const IOSNotificationOptions(),
     foregroundTaskOptions: ForegroundTaskOptions(
-      eventAction: ForegroundTaskEventAction.repeat(3000),
+      eventAction: ForegroundTaskEventAction.repeat(5000),
       autoRunOnBoot: false, allowWakeLock: true,
     ),
   );
@@ -66,7 +66,7 @@ class _DashboardState extends State<Dashboard> {
     FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
     _restore();
     unawaited(_refreshNativeStatus());
-    _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       if (!mounted) return;
       final rawFixTime = _data['fixTimestamp'];
       final fixTime = rawFixTime is String ? DateTime.tryParse(rawFixTime) : null;
@@ -94,7 +94,7 @@ class _DashboardState extends State<Dashboard> {
         }
       }
       final lastPoll = _lastNativePoll;
-      if (lastPoll == null || DateTime.now().difference(lastPoll) >= const Duration(seconds: 2)) {
+      if (lastPoll == null || DateTime.now().difference(lastPoll) >= const Duration(seconds: 10)) {
         unawaited(_refreshNativeStatus());
       }
     });

@@ -16,6 +16,8 @@ class GpsMonitorTaskHandler extends TaskHandler {
   DateTime? _lastAlert;
   StreamSubscription<Position>? _gpsSubscription;
   bool _gpsStarting = false;
+  DateTime? _lastNotificationUpdate;
+  String? _lastNotificationText;
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
@@ -88,7 +90,7 @@ class GpsMonitorTaskHandler extends TaskHandler {
     // ตรวจเครือข่ายแยกจาก GPS ทุกประมาณ 3 วินาที
     if (_lastNetRead == null ||
         timestamp.difference(_lastNetRead!) >=
-            const Duration(seconds: 3)) {
+            const Duration(seconds: 10)) {
       try {
         final result = await Connectivity().checkConnectivity();
         _network = result.map((item) => item.name).join(', ');
@@ -192,11 +194,23 @@ class GpsMonitorTaskHandler extends TaskHandler {
         ? 'ไม่มีข้อมูล'
         : '${ageSeconds.toStringAsFixed(1)}s';
 
-    await FlutterForegroundTask.updateService(
-      notificationTitle: 'GPS Net Monitor',
-      notificationText:
-          'GPS $accuracyText | อายุข้อมูล $ageText | $_network',
-    );
+    final notificationText =
+        'GPS $accuracyText | อายุข้อมูล $ageText | $_network';
+    final lastNotificationUpdate = _lastNotificationUpdate;
+    final shouldUpdateNotification =
+        _lastNotificationText != notificationText &&
+        (lastNotificationUpdate == null ||
+            now.difference(lastNotificationUpdate) >=
+                const Duration(seconds: 10));
+
+    if (shouldUpdateNotification) {
+      _lastNotificationUpdate = now;
+      _lastNotificationText = notificationText;
+      await FlutterForegroundTask.updateService(
+        notificationTitle: 'GPS Net Monitor',
+        notificationText: notificationText,
+      );
+    }
   }
 
   Future<void> _alertOnce(String message) async {
