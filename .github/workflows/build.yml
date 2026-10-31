@@ -174,6 +174,7 @@ jobs:
           VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | cut -d'+' -f1)
           if ! gh release view "v${VERSION}" >/dev/null 2>&1; then
             gh release create "v${VERSION}" build/app/outputs/flutter-apk/app-release.apk \
+              --target "$GITHUB_SHA" \
               --title "GPS Net Monitor v${VERSION}" \
               --notes "Build จาก GitHub Actions พร้อมลายเซ็นถาวร"
           else
