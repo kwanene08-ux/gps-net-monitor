@@ -449,7 +449,7 @@ Future<void> _runAgpsAction({required bool reset}) async {
       Card(color:color.withOpacity(.12), child: Padding(padding:const EdgeInsets.all(18), child:Row(children:[Icon(Icons.circle,color:color,size:20),const SizedBox(width:10),Expanded(child:Text(status,style:Theme.of(context).textTheme.titleLarge)),Text(gpsFresh ? '$score / 100' : 'N/A',style:Theme.of(context).textTheme.titleLarge)]))),
       _card('🛰️ GPS', [ 'สถานะ GPS: ${_data['gpsStatus'] ?? 'รอข้อมูล GPS'}',
         'อายุข้อมูล: ${_ageText()}',
-        'ดาวเทียม: ${_satelliteText()}', 'Accuracy: $accuracyText', 'ความเร็ว: ${_data['speedKmh'] == null ? 'N/A' : '${(_data['speedKmh'] as num).toStringAsFixed(1)} กม./ชม.'}', 'Latitude: ${_data['latitude'] ?? 'N/A'}', 'Longitude: ${_data['longitude'] ?? 'N/A'}', 'Provider: ${_data['provider'] ?? 'gps (รอข้อมูล)'}' ]),
+        'ดาวเทียม: ${_satelliteText()}', 'Accuracy: $accuracyText', 'ความเร็ว: ${_data['speedKmh'] == null ? 'N/A' : '${(_data['speedKmh'] as num).toStringAsFixed(1)} กม./ชม.'}', 'Latitude: ${_data['latitude'] ?? 'N/A'}', 'Longitude: ${_data['longitude'] ?? 'N/A'}', 'Provider: ${_data['provider'] ?? 'GPS_PROVIDER (กำลังรอ GNSS)'}', 'สถานะรับ GPS: ${_data['gpsSourceStatus'] ?? 'กำลังรอเริ่มบริการ'}', 'สถานะผ่านตัวกรอง: ${_data['gpsAcceptedStatus'] ?? 'ยังไม่มีพิกัดผ่านตัวกรอง'}' ]),
       _card('🛡️ ระบบป้องกัน GPS กระโดด', [
         'สถานะ: ${_data['gpsFilterStatus'] ?? 'รอข้อมูล GPS'}',
         'จุดที่รอยืนยัน: ${_data['gpsJumpPending'] == true ? 'มี 1 จุด' : 'ไม่มี'}',

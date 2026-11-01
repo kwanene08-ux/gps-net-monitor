@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:gps_provider/gps_provider.dart';
 import 'gps_freshness.dart';
 import 'gps_anti_jump_filter.dart';
 @pragma('vm:entry-point')
@@ -18,6 +19,8 @@ class GpsMonitorTaskHandler extends TaskHandler {
   bool _gpsReconfiguring = false;
   bool _isDestroying = false;
   String _network = 'N/A';
+  String _gpsStreamStatus = 'กำลังค้นหาดาวเทียมจาก GPS_PROVIDER';
+  bool _gpsHasReceivedFix = false;
   DateTime? _lastAlert;
   StreamSubscription<Position>? _gpsSubscription;
   bool _gpsStarting = false;
@@ -51,15 +54,8 @@ class GpsMonitorTaskHandler extends TaskHandler {
     _gpsStarting = true;
 
     try {
-      final stream = Geolocator.getPositionStream(
-        locationSettings: AndroidSettings(
-          accuracy: LocationAccuracy.best,
-          distanceFilter: 0,
-          intervalDuration: const Duration(
-            seconds: _gpsIntervalSeconds,
-          ),
-        ),
-      );
+      final stream = GpsProvider.getPositionStream()
+          .map(_positionFromGpsProvider);
 
       late final StreamSubscription<Position> subscription;
       subscription = stream.listen(
@@ -67,22 +63,92 @@ class GpsMonitorTaskHandler extends TaskHandler {
           unawaited(_handleStreamPosition(position));
         },
         onError: (Object error) {
+          if (identical(_gpsSubscription, subscription)) {
+            _gpsStreamStatus = 'GPS_PROVIDER ขัดข้อง: $error';
+          }
           unawaited(_handleGpsStreamError(subscription));
         },
         onDone: () {
+          if (identical(_gpsSubscription, subscription)) {
+            _gpsStreamStatus = 'GPS_PROVIDER stream ปิด';
+          }
           unawaited(_handleGpsStreamError(subscription));
         },
       );
       _gpsSubscription = subscription;
-    } catch (_) {
+    } catch (error) {
       _gpsSubscription = null;
+      _gpsStreamStatus = 'เริ่ม GPS_PROVIDER ไม่สำเร็จ: $error';
     } finally {
       _gpsStarting = false;
     }
   }
 
+  Position _positionFromGpsProvider(Map<String, dynamic> data) {
+    if (data['provider'] != 'gps') {
+      throw const FormatException(
+        'ข้อมูลมาจาก Provider ที่ไม่ใช่ GPS_PROVIDER',
+      );
+    }
+
+    final latitudeValue = data['latitude'];
+    final longitudeValue = data['longitude'];
+    final accuracyValue = data['accuracy'];
+    final timestampValue = data['timestamp'];
+
+    if (latitudeValue is! num ||
+        longitudeValue is! num ||
+        accuracyValue is! num ||
+        timestampValue is! num) {
+      throw const FormatException('ข้อมูล GPS_PROVIDER ไม่ครบ');
+    }
+
+    final latitude = latitudeValue.toDouble();
+    final longitude = longitudeValue.toDouble();
+    final accuracy = accuracyValue.toDouble();
+    final timestampMs = timestampValue.toDouble();
+
+    if (!latitude.isFinite ||
+        !longitude.isFinite ||
+        !accuracy.isFinite ||
+        !timestampMs.isFinite ||
+        latitude < -90 ||
+        latitude > 90 ||
+        longitude < -180 ||
+        longitude > 180 ||
+        accuracy < 0 ||
+        timestampMs <= 0 ||
+        timestampMs > 8640000000000000 ||
+        timestampMs != timestampMs.roundToDouble()) {
+      throw const FormatException('ค่าพิกัดหรือเวลา GPS_PROVIDER ไม่ถูกต้อง');
+    }
+
+    double readNumber(String key, double fallback) {
+      final value = data[key];
+      if (value is num && value.isFinite) {
+        return value.toDouble();
+      }
+      return fallback;
+    }
+
+    return Position(
+      latitude: latitude,
+      longitude: longitude,
+      timestamp: DateTime.fromMillisecondsSinceEpoch(timestampMs.toInt()),
+      accuracy: accuracy,
+      altitude: readNumber('altitude', 0.0),
+      altitudeAccuracy: readNumber('altitudeAccuracy', 0.0),
+      heading: readNumber('heading', 0.0),
+      headingAccuracy: readNumber('headingAccuracy', 999.0),
+      speed: readNumber('speed', 0.0),
+      speedAccuracy: readNumber('speedAccuracy', 999.0),
+      isMocked: data['isMocked'] == true,
+    );
+  }
   Future<void> _handleStreamPosition(Position position) async {
     if (_isDestroying) return;
+    _gpsHasReceivedFix = true;
+    _gpsStreamStatus = 'ได้รับข้อมูลดิบจาก GPS_PROVIDER แล้ว';
 
     final accepted = await _acceptPosition(position);
     if (_isDestroying) return;
@@ -234,7 +300,13 @@ class GpsMonitorTaskHandler extends TaskHandler {
       'latitude': position?.latitude,
       'longitude': position?.longitude,
       'speedKmh': speedKmh,
-      'provider': 'Android Location API',
+      'provider': _gpsHasReceivedFix
+          ? 'GPS_PROVIDER (ได้รับ GNSS fix แล้ว)'
+          : 'GPS_PROVIDER (กำลังรอ GNSS fix)',
+      'gpsSourceStatus': _gpsStreamStatus,
+      'gpsAcceptedStatus': _lastAccepted == null
+          ? 'ยังไม่มีพิกัดผ่านตัวกรอง'
+          : 'พิกัดล่าสุดเคยผ่านตัวกรองแล้ว',
       'network': _network,
       'timestamp': now.toIso8601String(),
       'fixTimestamp': fixTime?.toIso8601String(),
