@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'gps_anti_jump_filter.dart';
 
 /// ลดการสั่นของตำแหน่งเฉพาะช่วงที่ตรวจพบว่าจอดนิ่ง
@@ -13,7 +15,7 @@ class GpsStationarySmoother {
 
   final List<GpsFixSample> _window = <GpsFixSample>[];
 
-  GpsFixSample? _lastRaw;
+  GpsFixSample? _stationaryAnchor;
   DateTime? _lastTimestamp;
   int _stationaryEvidence = 0;
 
@@ -29,6 +31,7 @@ class GpsStationarySmoother {
     if (previousTime != null &&
         !sample.timestamp.isAfter(previousTime)) {
       _reset();
+      _lastTimestamp = sample.timestamp;
       return sample;
     }
 
@@ -36,7 +39,6 @@ class GpsStationarySmoother {
 
     if (sample.accuracy > _maxAccuracyMeters) {
       _reset();
-      _lastRaw = sample;
       _lastTimestamp = sample.timestamp;
       return sample;
     }
@@ -48,17 +50,15 @@ class GpsStationarySmoother {
         speed.isFinite &&
         speed >= _movingSpeed) {
       _reset();
-      _lastRaw = sample;
       _lastTimestamp = sample.timestamp;
       return sample;
     }
 
-    final previousRaw = _lastRaw;
-    if (isStationary && previousRaw != null) {
-      final displacement = _distanceMeters(previousRaw, sample);
+    final anchor = _stationaryAnchor;
+    if (isStationary && anchor != null) {
+      final displacement = _distanceMeters(anchor, sample);
       if (displacement > _movementReleaseMeters) {
         _reset();
-        _lastRaw = sample;
         _lastTimestamp = sample.timestamp;
         return sample;
       }
@@ -78,12 +78,10 @@ class GpsStationarySmoother {
         _stationaryEvidence = 0;
         _window.clear();
       }
-      _lastRaw = sample;
       return sample;
     }
 
     _stationaryEvidence++;
-    _lastRaw = sample;
 
     _window.add(sample);
     if (_window.length > _windowSize) {
@@ -94,19 +92,18 @@ class GpsStationarySmoother {
       return sample;
     }
 
+    if (!isStationary) {
+      _stationaryAnchor = _window.first;
+    }
     isStationary = true;
+
     return _medianFix(sample);
   }
 
   GpsFixSample _medianFix(GpsFixSample raw) {
-    final latitudes = _window
-        .map((fix) => fix.latitude)
-        .toList()
+    final latitudes = _window.map((fix) => fix.latitude).toList()
       ..sort();
-
-    final longitudes = _window
-        .map((fix) => fix.longitude)
-        .toList()
+    final longitudes = _window.map((fix) => fix.longitude).toList()
       ..sort();
 
     return GpsFixSample(
@@ -115,75 +112,36 @@ class GpsStationarySmoother {
       accuracy: raw.accuracy,
       timestamp: raw.timestamp,
       speedMetersPerSecond: raw.speedMetersPerSecond,
-      speedAccuracyMetersPerSecond:
-          raw.speedAccuracyMetersPerSecond,
+      speedAccuracyMetersPerSecond: raw.speedAccuracyMetersPerSecond,
     );
   }
 
   double _median(List<double> values) {
     final middle = values.length ~/ 2;
-    if (values.length.isOdd) {
-      return values[middle];
-    }
+    if (values.length.isOdd) return values[middle];
     return (values[middle - 1] + values[middle]) / 2.0;
   }
 
-  double _distanceMeters(
-    GpsFixSample first,
-    GpsFixSample second,
-  ) {
+  double _distanceMeters(GpsFixSample first, GpsFixSample second) {
     const metersPerDegree = 111195.0;
-
-    final meanLatitude =
-        (first.latitude + second.latitude) / 2.0;
-
+    final meanLatitude = (first.latitude + second.latitude) / 2.0;
     final deltaLatitude =
         (second.latitude - first.latitude) * metersPerDegree;
-
-    final deltaLongitude =
-        (second.longitude - first.longitude) *
+    final deltaLongitude = (second.longitude - first.longitude) *
         metersPerDegree *
-        _cosDegrees(meanLatitude);
+        math.cos(meanLatitude * math.pi / 180.0);
 
-    return _sqrt(
+    return math.sqrt(
       deltaLatitude * deltaLatitude +
-      deltaLongitude * deltaLongitude,
+          deltaLongitude * deltaLongitude,
     );
-  }
-
-  double _cosDegrees(double degrees) {
-    return _cos(degrees * 3.141592653589793 / 180.0);
-  }
-
-  double _sqrt(double value) {
-    if (value <= 0) return 0;
-    return _sqrtNewton(value);
-  }
-
-  double _sqrtNewton(double value) {
-    var estimate = value > 1 ? value : 1.0;
-    for (var i = 0; i < 20; i++) {
-      estimate = (estimate + value / estimate) / 2.0;
-    }
-    return estimate;
-  }
-
-  double _cos(double value) {
-    // Taylor approximation is sufficient for local GPS displacement.
-    final x = value % (2.0 * 3.141592653589793);
-    final x2 = x * x;
-    return 1.0 -
-        x2 / 2.0 +
-        x2 * x2 / 24.0 -
-        x2 * x2 * x2 / 720.0 +
-        x2 * x2 * x2 * x2 / 40320.0;
   }
 
   void _reset() {
     isStationary = false;
     _stationaryEvidence = 0;
     _window.clear();
-    _lastRaw = null;
+    _stationaryAnchor = null;
     _lastTimestamp = null;
   }
 }

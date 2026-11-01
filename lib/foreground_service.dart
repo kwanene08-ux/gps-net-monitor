@@ -5,6 +5,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:gps_provider/gps_provider.dart';
 import 'gps_freshness.dart';
 import 'gps_anti_jump_filter.dart';
+import 'gps_stationary_smoother.dart';
 @pragma('vm:entry-point')
 void startCallback() =>
     FlutterForegroundTask.setTaskHandler(GpsMonitorTaskHandler());
@@ -12,6 +13,7 @@ void startCallback() =>
 class GpsMonitorTaskHandler extends TaskHandler {
   Position? _lastAccepted;
   final GpsAntiJumpFilter _antiJumpFilter = GpsAntiJumpFilter();
+  final GpsStationarySmoother _stationarySmoother = GpsStationarySmoother();
   static const int _gpsIntervalSeconds = 2;
   DateTime? _lastNetRead;
   DateTime? _lastGpsStartAttempt;
@@ -244,16 +246,17 @@ class GpsMonitorTaskHandler extends TaskHandler {
   Future<Position?> _acceptPosition(Position? position) async {
     if (position == null) return null;
 
-    final decision = _antiJumpFilter.evaluate(
-      GpsFixSample(
-        latitude: position.latitude,
-        longitude: position.longitude,
-        accuracy: position.accuracy,
-        timestamp: position.timestamp,
-        speedMetersPerSecond: position.speed,
-        speedAccuracyMetersPerSecond: position.speedAccuracy,
-      ),
+    final rawFix = GpsFixSample(
+      latitude: position.latitude,
+      longitude: position.longitude,
+      accuracy: position.accuracy,
+      timestamp: position.timestamp,
+      speedMetersPerSecond: position.speed,
+      speedAccuracyMetersPerSecond: position.speedAccuracy,
     );
+
+    // Anti-Jump ยังคงตรวจพิกัดดิบเหมือนเดิม
+    final decision = _antiJumpFilter.evaluate(rawFix);
 
     if (!decision.accepted) {
       if (decision.jumpDetected) {
@@ -262,8 +265,26 @@ class GpsMonitorTaskHandler extends TaskHandler {
       return null;
     }
 
-    _lastAccepted = position;
-    return position;
+    // ปรับพิกัดเฉพาะ Fix ที่ Anti-Jump ยอมรับแล้ว
+    final filteredFix = _stationarySmoother.process(rawFix);
+
+    // รักษา Accuracy, เวลา, ความเร็ว และข้อมูลเซ็นเซอร์จาก GPS ดิบ
+    final output = Position(
+      latitude: filteredFix.latitude,
+      longitude: filteredFix.longitude,
+      timestamp: position.timestamp,
+      accuracy: position.accuracy,
+      altitude: position.altitude,
+      altitudeAccuracy: position.altitudeAccuracy,
+      heading: position.heading,
+      headingAccuracy: position.headingAccuracy,
+      speed: position.speed,
+      speedAccuracy: position.speedAccuracy,
+      isMocked: position.isMocked,
+    );
+
+    _lastAccepted = output;
+    return output;
   }
 
   Future<void> _publish(Position? position) async {
