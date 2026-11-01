@@ -49,6 +49,68 @@ jobs:
             cp /tmp/GPSNetMainActivity.kt android/app/src/main/kotlin/com/gpsnetmonitor/gps_net_monitor/MainActivity.kt
           fi
 
+      - name: Set isolated test application ID
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import re
+          import sys
+
+          candidates = [
+              Path("android/app/build.gradle"),
+              Path("android/app/build.gradle.kts"),
+          ]
+          gradle = next((p for p in candidates if p.is_file()), None)
+          if gradle is None:
+              sys.exit("ERROR: ไม่พบ app Gradle file")
+
+          data = gradle.read_text()
+          expected_namespace = "com.gpsnetmonitor.gps_net_monitor"
+
+          ns = re.findall(
+              r'(?m)^\s*namespace\s*(?:=\s*)?"([^"]+)"',
+              data
+          )
+          if ns != [expected_namespace]:
+              sys.exit(f"ERROR: namespace ไม่ตรง: {ns}")
+
+          pattern = re.compile(
+              r'(?m)^(\s*applicationId\s*(?:=\s*)?)'
+              r'"com\.gpsnetmonitor\.gps_net_monitor"(\s*)$'
+          )
+          matches = list(pattern.finditer(data))
+          if len(matches) != 1:
+              sys.exit(
+                  f"ERROR: ต้องพบ applicationId เดิม 1 จุด "
+                  f"แต่พบ {len(matches)}"
+              )
+
+          data = pattern.sub(
+              r'\g<1>"com.gpsnetmonitor.gps_net_monitor.test"\g<2>',
+              data,
+              count=1
+          )
+
+          if "com.gpsnetmonitor.gps_net_monitor.test" not in data:
+              sys.exit("ERROR: ตั้ง test applicationId ไม่สำเร็จ")
+
+          gradle.write_text(data)
+          print("PASS: namespace คงเดิม")
+          print("PASS: applicationId แยกเป็น .test")
+          print(f"Gradle: {gradle}")
+          PYTHON
+
+          if [ -f android/app/build.gradle ]; then
+            grep -nE 'namespace|applicationId' android/app/build.gradle
+          elif [ -f android/app/build.gradle.kts ]; then
+            grep -nE 'namespace|applicationId' android/app/build.gradle.kts
+          else
+            echo "ERROR: ไม่พบ app Gradle file"
+            exit 1
+          fi
+
       - name: Install dependencies
         run: flutter pub get
 
@@ -64,7 +126,7 @@ jobs:
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: GPS-Net-Monitor-v1.5.0-ARM64
+          name: GPS-Net-Monitor-stationary-test-v1.5.2-ARM64
           path: build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
           retention-days: 7
