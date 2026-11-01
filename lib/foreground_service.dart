@@ -5,6 +5,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:gps_provider/gps_provider.dart';
 import 'gps_freshness.dart';
 import 'gps_anti_jump_filter.dart';
+import 'ipv4_network_monitor.dart';
 @pragma('vm:entry-point')
 void startCallback() =>
     FlutterForegroundTask.setTaskHandler(GpsMonitorTaskHandler());
@@ -19,6 +20,9 @@ class GpsMonitorTaskHandler extends TaskHandler {
   bool _gpsReconfiguring = false;
   bool _isDestroying = false;
   String _network = 'N/A';
+  final Ipv4NetworkMonitor _ipv4Monitor = Ipv4NetworkMonitor();
+  DateTime? _lastIpv4Check;
+  bool _ipv4CheckRunning = false;
   String _gpsStreamStatus = 'กำลังค้นหาดาวเทียมจาก GPS_PROVIDER';
   bool _gpsHasReceivedFix = false;
   DateTime? _lastAlert;
@@ -234,11 +238,35 @@ class GpsMonitorTaskHandler extends TaskHandler {
       _lastNetRead = DateTime.now();
     }
 
+    // ตรวจ IPv4 แยกจาก GPS และไม่รอผลตรวจในรอบนี้
+    if (_lastIpv4Check == null ||
+        timestamp.difference(_lastIpv4Check!) >=
+            const Duration(seconds: 10)) {
+      _lastIpv4Check = timestamp;
+      unawaited(_checkIpv4Network());
+    }
+
     // ตรวจ GPS ค้างและเริ่ม Stream ใหม่เมื่อจำเป็น
     await _maybeRecoverStaleGps();
 
     // ส่งข้อมูลล่าสุดพร้อมอายุจริง ไม่สร้างตำแหน่งใหม่จากข้อมูลเก่า
     await _publish(_lastAccepted);
+  }
+
+  Future<void> _checkIpv4Network() async {
+    if (_isDestroying || _ipv4CheckRunning) return;
+
+    _ipv4CheckRunning = true;
+    try {
+      final result = await _ipv4Monitor.check();
+      if (result != null && !_isDestroying) {
+        FlutterForegroundTask.sendDataToMain(result);
+      }
+    } catch (_) {
+      // ความผิดพลาดของการตรวจเน็ตต้องไม่หยุด GPS
+    } finally {
+      _ipv4CheckRunning = false;
+    }
   }
 
   Future<Position?> _acceptPosition(Position? position) async {

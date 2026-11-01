@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'foreground_service.dart';
+import 'ipv4_network_monitor.dart';
 import 'gps_freshness.dart';
 
 import 'notification_service.dart';
@@ -417,7 +418,6 @@ Future<void> _runAgpsAction({required bool reset}) async {
   @override Widget build(BuildContext context) {
     final accuracy = (_data['accuracy'] as num?)?.toDouble(); final dbm = _data['dbm'] as int?;
     final gpsScore = accuracy == null ? 0 : accuracy <= 5 ? 50 : accuracy <= 15 ? 35 : accuracy <= 30 ? 15 : 0;
-    final netScore = dbm == null ? 0 : dbm >= -80 ? 50 : dbm >= -100 ? 35 : dbm >= -110 ? 15 : 0;
     final gpsFresh = _data['gpsFresh'] == true;
     final rawAge = _data['ageSeconds'];
     final gpsAge = rawAge is num ? rawAge.toDouble() : null;
@@ -430,23 +430,36 @@ Future<void> _runAgpsAction({required bool reset}) async {
             : accuracy > 10
                 ? 'คลาดเคลื่อน · ±${accuracy.toStringAsFixed(1)} ม.'
                 : '±${accuracy.toStringAsFixed(1)} ม.';
-    final score = gpsScore + netScore;
-    final color = !gpsFresh
+    final gpsColor = !gpsFresh
         ? Colors.grey
-        : score >= 80
+        : gpsScore >= 35
             ? Colors.green
-            : score >= 50
+            : gpsScore >= 15
                 ? Colors.orange
                 : Colors.red;
-    final status = !gpsFresh
+    final gpsStatus = !gpsFresh
         ? (_data['gpsStatus'] ?? 'รอ GPS').toString()
-        : score >= 80
-            ? 'พร้อมวิ่ง'
-            : score >= 50
-                ? 'ระวัง'
-                : 'ตรวจสอบ GPS/สัญญาณ';
+        : gpsScore >= 35
+            ? 'GPS อยู่ในเกณฑ์ดี'
+            : gpsScore >= 15
+                ? 'GPS ควรเฝ้าระวัง'
+                : 'GPS ควรตรวจสอบ';
+
+    final successRate = _data['ipv4SuccessRate'] as num?;
+    final tcpLatency = _data['ipv4TcpLatencyMs'] as num?;
+    final networkScore = successRate == null
+        ? null
+        : successRate >= 95 && tcpLatency != null && tcpLatency <= 150
+            ? 100
+            : successRate >= 90 && tcpLatency != null && tcpLatency <= 300
+                ? 80
+                : successRate >= 75
+                    ? 60
+                    : successRate >= 50
+                        ? 40
+                        : 0;
     return Scaffold(appBar: AppBar(title: const Text('GPS Net Monitor'), actions:[IconButton(onPressed:()=>_settings('app'), icon:const Icon(Icons.settings))]), body: ListView(padding: const EdgeInsets.all(16), children:[
-      Card(color:color.withOpacity(.12), child: Padding(padding:const EdgeInsets.all(18), child:Row(children:[Icon(Icons.circle,color:color,size:20),const SizedBox(width:10),Expanded(child:Text(status,style:Theme.of(context).textTheme.titleLarge)),Text(gpsFresh ? '$score / 100' : 'N/A',style:Theme.of(context).textTheme.titleLarge)]))),
+      Card(color:gpsColor.withOpacity(.12), child: Padding(padding:const EdgeInsets.all(18), child:Row(children:[Icon(Icons.circle,color:gpsColor,size:20),const SizedBox(width:10),Expanded(child:Text(gpsStatus,style:Theme.of(context).textTheme.titleLarge)),Text(gpsFresh ? '$gpsScore / 50' : 'N/A',style:Theme.of(context).textTheme.titleLarge)]))),
       _card('🛰️ GPS', [ 'สถานะ GPS: ${_data['gpsStatus'] ?? 'รอข้อมูล GPS'}',
         'อายุข้อมูล: ${_ageText()}',
         'ดาวเทียม: ${_satelliteText()}', 'Accuracy: $accuracyText', 'ความเร็ว: ${_data['speedKmh'] == null ? 'N/A' : '${(_data['speedKmh'] as num).toStringAsFixed(1)} กม./ชม.'}', 'Latitude: ${_data['latitude'] ?? 'N/A'}', 'Longitude: ${_data['longitude'] ?? 'N/A'}', 'Provider: ${_data['provider'] ?? 'GPS_PROVIDER (กำลังรอ GNSS)'}', 'สถานะรับ GPS: ${_data['gpsSourceStatus'] ?? 'กำลังรอเริ่มบริการ'}', 'สถานะผ่านตัวกรอง: ${_data['gpsAcceptedStatus'] ?? 'ยังไม่มีพิกัดผ่านตัวกรอง'}' ]),
@@ -468,7 +481,7 @@ Future<void> _runAgpsAction({required bool reset}) async {
           style: TextStyle(fontSize: 12),
         ),
       ),
-      _card('📶 เครือข่าย', [
+      _card('📶 สัญญาณมือถือ (ข้อมูลวิทยุ)', [
         'อุปกรณ์: ${_data['device'] ?? 'กำลังอ่านข้อมูล…'}',
         'ชนิดเครือข่าย: ${_data['networkType'] ?? _data['network'] ?? 'กำลังอ่านข้อมูล…'}',
         'สัญญาณ: ${dbm == null ? (_data['phonePermissionGranted'] == false ? 'อนุญาตสิทธิ์โทรศัพท์ก่อน' : 'ยังอ่านค่าไม่ได้') : '$dbm dBm'}',
@@ -486,6 +499,32 @@ Future<void> _runAgpsAction({required bool reset}) async {
         'SNR: ${_radioValue('lteSnr', ' dB')}',
         'TA: ${_radioValue('lteTa')}',
       ]),
+      Card(
+        color: Colors.blue.withOpacity(.08),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('🌐 อินเทอร์เน็ต IPv4',
+                  style: Theme.of(context).textTheme.titleMedium),
+              const Divider(),
+              Text('สถานะ: ${_data['ipv4Status'] ?? 'รอการตรวจสอบ'}'),
+              Text('ปลายทาง: ${_data['ipv4Host'] ?? Ipv4NetworkMonitor.host}:${_data['ipv4Port'] ?? Ipv4NetworkMonitor.port}'),
+              Text('IPv4: ${_data['ipv4Address'] ?? 'N/A'}'),
+              Text('TCP Latency: ${tcpLatency == null ? 'N/A' : '${tcpLatency.toStringAsFixed(0)} ms'}'),
+              Text('Timeout: ${_data['ipv4Timeout'] == true ? 'ใช่' : _data['ipv4Success'] == true ? 'ไม่พบ' : 'ยังไม่มีผล'}'),
+              Text('อัตราเชื่อมต่อสำเร็จ: ${successRate == null ? 'N/A' : '${successRate.toStringAsFixed(1)}%'}'),
+              Text('จำนวนตัวอย่าง: ${_data['ipv4Samples'] ?? 0}'),
+              Text('คะแนน Network: ${networkScore == null ? 'รอข้อมูล' : '$networkScore / 100'}'),
+              Text('ตรวจล่าสุด: ${_data['ipv4CheckedAt'] ?? 'ยังไม่มีข้อมูล'}'),
+              const SizedBox(height: 6),
+              const Text('ตรวจ DNS IPv4 และ TCP พอร์ต 443 เท่านั้น ไม่เปลี่ยน APN/DNS/VPN ของเครื่อง',
+                  style: TextStyle(fontSize: 12)),
+            ],
+          ),
+        ),
+      ),
       Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('สถานะบริการ: ${_running ? 'ทำงานเบื้องหลัง' : 'หยุดอยู่'}'),Text('เริ่มมา: ${_started == null ? 'ไม่ทราบ' : _elapsed(DateTime.now().difference(_started!))}'),const SizedBox(height:12),SizedBox(width:double.infinity,height:56,child:FilledButton.icon(style:FilledButton.styleFrom(backgroundColor:_running?Colors.red:Colors.green),onPressed:(_serviceBusy)?null:_startStop,icon:(_serviceBusy)?const SizedBox(width:20,height:20,child:CircularProgressIndicator(strokeWidth:2)):Icon(_running?Icons.stop:Icons.play_arrow),label:Text((_serviceBusy)?'กำลังดำเนินการ…':_running?'⏹️ หยุดติดตาม':'▶️ เริ่มติดตาม')))]))),
       Wrap(spacing:8,runSpacing:8,children:[
         OutlinedButton.icon(onPressed:()=>_settings('location'),icon:const Icon(Icons.location_on),label:const Text('ตั้งค่า GPS')),
