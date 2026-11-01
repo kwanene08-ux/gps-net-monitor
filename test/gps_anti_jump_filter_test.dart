@@ -21,7 +21,7 @@ void main() {
     );
   }
 
-  group('GpsAntiJumpFilter v1.4.0', () {
+  group('GpsAntiJumpFilter v1.5.0', () {
     test('รับ GPS Fix แรก', () {
       final filter = GpsAntiJumpFilter();
       expect(filter.evaluate(fix(0, 0)).accepted, isTrue);
@@ -33,38 +33,25 @@ void main() {
       expect(filter.evaluate(fix(30, 2)).accepted, isTrue);
     });
 
-    test('พักจุดกระโดดและนับ Candidate แรก', () {
+    test('ปฏิเสธจุดที่กระโดด 200 เมตรใน 2 วินาที', () {
       final filter = GpsAntiJumpFilter();
       filter.evaluate(fix(0, 0));
+
       final result = filter.evaluate(fix(200, 2));
 
       expect(result.accepted, isFalse);
       expect(result.jumpDetected, isTrue);
+      expect(result.allowedDistanceMeters, lessThan(70));
       expect(filter.isPending, isTrue);
-      expect(filter.confirmationCount, 1);
-      expect(filter.rejectedCount, 1);
-      expect(result.distanceMeters, isNotNull);
-      expect(result.allowedDistanceMeters, isNotNull);
     });
 
-    test('ยืนยันตำแหน่งใหม่เมื่อ Fix คุณภาพดีต่อเนื่อง 2 จุด', () {
+    test('ไม่มีความเร็วที่เชื่อถือได้ ต้องยืนยัน 3 Fix', () {
       final filter = GpsAntiJumpFilter();
       filter.evaluate(fix(0, 0));
-      filter.evaluate(fix(200, 2));
-      final result = filter.evaluate(fix(260, 4));
 
-      expect(result.accepted, isTrue);
-      expect(result.reacquired, isTrue);
-      expect(filter.isPending, isFalse);
-      expect(filter.status, 'ยืนยันตำแหน่งใหม่แล้ว');
-    });
-
-    test('Fix accuracy ต่ำต้องยืนยัน 3 จุด', () {
-      final filter = GpsAntiJumpFilter();
-      filter.evaluate(fix(0, 0));
-      final first = filter.evaluate(fix(200, 2, accuracy: 15));
-      final second = filter.evaluate(fix(260, 4, accuracy: 15));
-      final third = filter.evaluate(fix(320, 6, accuracy: 15));
+      final first = filter.evaluate(fix(200, 2));
+      final second = filter.evaluate(fix(260, 4));
+      final third = filter.evaluate(fix(320, 6));
 
       expect(first.accepted, isFalse);
       expect(first.requiredConfirmations, 3);
@@ -74,20 +61,105 @@ void main() {
       expect(third.reacquired, isTrue);
     });
 
-    test('ความเร็วต่ำและ Accuracy ดี ต้องยืนยัน 3 จุด', () {
+    test('ความเร็วที่เชื่อถือได้ขณะเคลื่อนที่ ยืนยันได้ใน 2 Fix', () {
       final filter = GpsAntiJumpFilter();
       filter.evaluate(fix(0, 0));
+
       final first = filter.evaluate(
-        fix(200, 2, speed: 0.2, speedAccuracy: 0.5),
+        fix(200, 2, speed: 20, speedAccuracy: 0.5),
       );
+      final second = filter.evaluate(
+        fix(260, 4, speed: 20, speedAccuracy: 0.5),
+      );
+
+      expect(first.accepted, isFalse);
+      expect(first.requiredConfirmations, 2);
+      expect(second.accepted, isTrue);
+      expect(second.reacquired, isTrue);
+    });
+
+    test('Fix Accuracy ต่ำต้องยืนยัน 3 จุด', () {
+      final filter = GpsAntiJumpFilter();
+      filter.evaluate(fix(0, 0));
+
+      final first = filter.evaluate(fix(200, 2, accuracy: 15));
+      final second = filter.evaluate(fix(260, 4, accuracy: 15));
+      final third = filter.evaluate(fix(320, 6, accuracy: 15));
+
+      expect(first.accepted, isFalse);
       expect(first.requiredConfirmations, 3);
+      expect(second.accepted, isFalse);
+      expect(second.confirmationCount, 2);
+      expect(third.accepted, isTrue);
+    });
+
+    test('จอดนิ่งแล้วตรึง Anchor ไม่ให้ GPS drift สะสม', () {
+      final filter = GpsAntiJumpFilter();
+
+      filter.evaluate(
+        fix(0, 0, speed: 0.2, speedAccuracy: 0.5),
+      );
+      final stationary = filter.evaluate(
+        fix(0, 2, speed: 0.2, speedAccuracy: 0.5),
+      );
+      final withinRadius = filter.evaluate(
+        fix(7, 4, speed: 0.2, speedAccuracy: 0.5),
+      );
+      final outsideRadius = filter.evaluate(
+        fix(14, 6, speed: 0.2, speedAccuracy: 0.5),
+      );
+
+      expect(stationary.accepted, isTrue);
+      expect(filter.isStationary, isTrue);
+      expect(withinRadius.accepted, isTrue);
+      expect(outsideRadius.accepted, isFalse);
+      expect(outsideRadius.jumpDetected, isTrue);
+    });
+
+    test('ความเร็วเคลื่อนที่ต่อเนื่องปลดสถานะจอดนิ่ง', () {
+      final filter = GpsAntiJumpFilter();
+
+      filter.evaluate(
+        fix(0, 0, speed: 0.2, speedAccuracy: 0.5),
+      );
+      filter.evaluate(
+        fix(0, 2, speed: 0.2, speedAccuracy: 0.5),
+      );
+      expect(filter.isStationary, isTrue);
+
+      filter.evaluate(
+        fix(10, 4, speed: 5, speedAccuracy: 0.5),
+      );
+      final moving = filter.evaluate(
+        fix(20, 6, speed: 5, speedAccuracy: 0.5),
+      );
+
+      expect(filter.isStationary, isFalse);
+      expect(moving.accepted, isTrue);
+    });
+
+    test('GPS ขาดช่วงต้องยืนยัน Fix ต่อเนื่องก่อนรับตำแหน่ง', () {
+      final filter = GpsAntiJumpFilter();
+      filter.evaluate(fix(0, 0));
+
+      final first = filter.evaluate(fix(50, 10));
+      final second = filter.evaluate(fix(60, 12));
+      final third = filter.evaluate(fix(70, 14));
+
+      expect(first.accepted, isFalse);
+      expect(first.requiredConfirmations, 3);
+      expect(second.accepted, isFalse);
+      expect(second.confirmationCount, 2);
+      expect(third.accepted, isTrue);
+      expect(third.reacquired, isTrue);
     });
 
     test('Candidate หมดอายุแล้วเริ่มนับใหม่', () {
       final filter = GpsAntiJumpFilter();
       filter.evaluate(fix(0, 0));
       filter.evaluate(fix(200, 2));
-      final result = filter.evaluate(fix(600, 12));
+
+      final result = filter.evaluate(fix(600, 13));
 
       expect(result.accepted, isFalse);
       expect(filter.confirmationCount, 1);
@@ -98,17 +170,18 @@ void main() {
       final filter = GpsAntiJumpFilter();
       filter.evaluate(fix(0, 0));
       filter.evaluate(fix(200, 2));
+
       final result = filter.evaluate(fix(8, 4));
 
       expect(result.accepted, isTrue);
       expect(filter.isPending, isFalse);
-      expect(filter.status, contains('กลับสู่ตำแหน่งเดิม'));
     });
 
     test('Candidate ที่ไม่ต่อเนื่องเริ่มนับใหม่', () {
       final filter = GpsAntiJumpFilter();
       filter.evaluate(fix(0, 0));
       filter.evaluate(fix(200, 2));
+
       final result = filter.evaluate(fix(500, 4));
 
       expect(result.accepted, isFalse);
@@ -118,6 +191,7 @@ void main() {
     test('ปฏิเสธเวลา GPS ซ้ำหรือย้อนหลัง', () {
       final filter = GpsAntiJumpFilter();
       filter.evaluate(fix(0, 2));
+
       expect(filter.evaluate(fix(1, 2)).accepted, isFalse);
       expect(filter.evaluate(fix(1, 1)).accepted, isFalse);
     });
@@ -132,6 +206,7 @@ void main() {
           timestamp: start,
         ),
       );
+
       expect(result.accepted, isFalse);
     });
 
@@ -145,6 +220,7 @@ void main() {
           timestamp: start,
         ),
       );
+
       expect(result.accepted, isFalse);
     });
   });
