@@ -13,7 +13,7 @@ void startCallback() =>
 class GpsMonitorTaskHandler extends TaskHandler {
   Position? _lastAccepted;
   final GpsAntiJumpFilter _antiJumpFilter = GpsAntiJumpFilter();
-  static const int _gpsIntervalSeconds = 2;
+  static const int _gpsIntervalSeconds = 1;
   DateTime? _lastNetRead;
   DateTime? _lastGpsStartAttempt;
   DateTime? _gpsStreamStartedAt;

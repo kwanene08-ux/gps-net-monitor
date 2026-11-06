@@ -17,7 +17,7 @@ import io.flutter.plugin.common.EventChannel
 class GpsProviderPlugin : FlutterPlugin, EventChannel.StreamHandler, LocationListener {
     companion object {
         private const val CHANNEL = "gps_net_monitor/gps_provider"
-        private const val UPDATE_INTERVAL_MS = 2000L
+        private const val UPDATE_INTERVAL_MS = 1000L
     }
 
     private var appContext: Context? = null

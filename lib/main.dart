@@ -68,7 +68,7 @@ class _DashboardState extends State<Dashboard> {
     FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
     _restore();
     unawaited(_refreshNativeStatus());
-    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+    _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       final rawFixTime = _data['fixTimestamp'];
       final fixTime = rawFixTime is String ? DateTime.tryParse(rawFixTime) : null;
