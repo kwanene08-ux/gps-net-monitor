@@ -16,6 +16,8 @@ class GpsMonitorTaskHandler extends TaskHandler {
   static const int _gpsIntervalSeconds = 2;
   DateTime? _lastNetRead;
   DateTime? _lastGpsStartAttempt;
+  DateTime? _gpsStreamStartedAt;
+  DateTime? _lastRawGpsEventAt;
   DateTime? _lastStaleRecovery;
   bool _gpsReconfiguring = false;
   bool _isDestroying = false;
@@ -80,6 +82,8 @@ class GpsMonitorTaskHandler extends TaskHandler {
         },
       );
       _gpsSubscription = subscription;
+      _gpsStreamStartedAt = DateTime.now();
+      _lastRawGpsEventAt = null;
     } catch (error) {
       _gpsSubscription = null;
       _gpsStreamStatus = 'เริ่ม GPS_PROVIDER ไม่สำเร็จ: $error';
@@ -151,6 +155,7 @@ class GpsMonitorTaskHandler extends TaskHandler {
   }
   Future<void> _handleStreamPosition(Position position) async {
     if (_isDestroying) return;
+    _lastRawGpsEventAt = DateTime.now();
     _gpsHasReceivedFix = true;
     _gpsStreamStatus = 'ได้รับข้อมูลดิบจาก GPS_PROVIDER แล้ว';
 
@@ -166,10 +171,7 @@ class GpsMonitorTaskHandler extends TaskHandler {
   }
 
   Future<void> _maybeRecoverStaleGps() async {
-    final last = _lastAccepted;
-
-    // ไม่รีสตาร์ตวนในช่วงเริ่มต้นที่ยังไม่เคยได้รับ GPS fix
-    if (last == null ||
+    if (_isDestroying ||
         _gpsSubscription == null ||
         _gpsStarting ||
         _gpsReconfiguring) {
@@ -177,9 +179,18 @@ class GpsMonitorTaskHandler extends TaskHandler {
     }
 
     final now = DateTime.now();
-    final age = now.difference(last.timestamp);
+    final lastRaw = _lastRawGpsEventAt;
+    final reference = lastRaw ?? _gpsStreamStartedAt;
 
-    if (age < const Duration(seconds: 30)) return;
+    if (reference == null) return;
+
+    // รอข้อมูล GPS ครั้งแรก 60 วินาที
+    // หลังได้รับข้อมูลแล้ว ตรวจเมื่อ Stream เงียบ 30 วินาที
+    final timeout = lastRaw == null
+        ? const Duration(seconds: 60)
+        : const Duration(seconds: 30);
+
+    if (now.difference(reference) < timeout) return;
 
     if (_lastStaleRecovery != null &&
         now.difference(_lastStaleRecovery!) <
@@ -196,8 +207,12 @@ class GpsMonitorTaskHandler extends TaskHandler {
       await oldSubscription?.cancel();
 
       _lastStaleRecovery = DateTime.now();
+      _lastRawGpsEventAt = null;
+      _gpsStreamStartedAt = null;
 
-      // เริ่มใหม่เฉพาะ GPS stream ของแอปนี้
+      _gpsStreamStatus =
+          'GPS_PROVIDER เงียบเกินกำหนด กำลังเริ่ม Stream ใหม่';
+
       await _startGpsStream(force: true);
     } finally {
       _gpsReconfiguring = false;
