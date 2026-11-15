@@ -11,7 +11,6 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'foreground_service.dart';
-import 'ipv4_network_monitor.dart';
 import 'gps_freshness.dart';
 
 import 'notification_service.dart';
@@ -445,42 +444,11 @@ Future<void> _runAgpsAction({required bool reset}) async {
                 ? 'GPS ควรเฝ้าระวัง'
                 : 'GPS ควรตรวจสอบ';
 
-    final successRate = _data['ipv4SuccessRate'] as num?;
-    final tcpLatency = _data['ipv4TcpLatencyMs'] as num?;
-    final networkScore = successRate == null
-        ? null
-        : successRate >= 95 && tcpLatency != null && tcpLatency <= 150
-            ? 100
-            : successRate >= 90 && tcpLatency != null && tcpLatency <= 300
-                ? 80
-                : successRate >= 75
-                    ? 60
-                    : successRate >= 50
-                        ? 40
-                        : 0;
     return Scaffold(appBar: AppBar(title: const Text('GPS Net Monitor'), actions:[IconButton(onPressed:()=>_settings('app'), icon:const Icon(Icons.settings))]), body: ListView(padding: const EdgeInsets.all(16), children:[
       Card(color:gpsColor.withOpacity(.12), child: Padding(padding:const EdgeInsets.all(18), child:Row(children:[Icon(Icons.circle,color:gpsColor,size:20),const SizedBox(width:10),Expanded(child:Text(gpsStatus,style:Theme.of(context).textTheme.titleLarge)),Text(gpsFresh ? '$gpsScore / 50' : 'N/A',style:Theme.of(context).textTheme.titleLarge)]))),
       _card('🛰️ GPS', [ 'สถานะ GPS: ${_data['gpsStatus'] ?? 'รอข้อมูล GPS'}',
         'อายุข้อมูล: ${_ageText()}',
         'ดาวเทียม: ${_satelliteText()}', 'Accuracy: $accuracyText', 'ความเร็ว: ${_data['speedKmh'] == null ? 'N/A' : '${(_data['speedKmh'] as num).toStringAsFixed(1)} กม./ชม.'}', 'Latitude: ${_data['latitude'] ?? 'N/A'}', 'Longitude: ${_data['longitude'] ?? 'N/A'}', 'Provider: ${_data['provider'] ?? 'GPS_PROVIDER (กำลังรอ GNSS)'}', 'สถานะรับ GPS: ${_data['gpsSourceStatus'] ?? 'กำลังรอเริ่มบริการ'}', 'สถานะผ่านตัวกรอง: ${_data['gpsAcceptedStatus'] ?? 'ยังไม่มีพิกัดผ่านตัวกรอง'}' ]),
-      _card('🛡️ ระบบป้องกัน GPS กระโดด', [
-        'สถานะ: ${_data['gpsFilterStatus'] ?? 'รอข้อมูล GPS'}',
-        'จุดที่รอยืนยัน: ${_data['gpsJumpPending'] == true ? 'มี 1 จุด' : 'ไม่มี'}',
-        'การยืนยันตำแหน่ง: ${_data['gpsJumpConfirmations'] ?? 0}/${_data['gpsJumpRequiredConfirmations'] ?? 2} จุด',
-        'ระยะที่ตรวจพบ: ${_data['gpsJumpDistanceMeters'] == null ? 'N/A' : '${(_data['gpsJumpDistanceMeters'] as num).toStringAsFixed(1)} ม.'}',
-        'ระยะที่อนุญาต: ${_data['gpsJumpAllowedMeters'] == null ? 'N/A' : '${(_data['gpsJumpAllowedMeters'] as num).toStringAsFixed(1)} ม.'}',
-        'เหตุผล: ${_data['gpsJumpReason'] ?? 'รอข้อมูล'}',
-        'จำนวนจุดผิดปกติที่ตรวจพบ: ${_data['gpsJumpRejectedCount'] ?? 0}',
-        'ช่วงรับ GPS: ${_data['gpsIntervalSeconds'] ?? 2} วินาที',
-        'กรองตำแหน่งภายในเครื่อง • ไม่สร้างพิกัดใหม่',
-      ]),
-      const Padding(
-        padding: EdgeInsets.only(bottom: 8),
-        child: Text(
-          'GPS Stream: รับตำแหน่งต่อเนื่อง (ช่วงคงที่ 2 วินาที พร้อมตัวกรอง GPS กระโดด)',
-          style: TextStyle(fontSize: 12),
-        ),
-      ),
       _card('📶 สัญญาณมือถือ (ข้อมูลวิทยุ)', [
         'อุปกรณ์: ${_data['device'] ?? 'กำลังอ่านข้อมูล…'}',
         'ชนิดเครือข่าย: ${_data['networkType'] ?? _data['network'] ?? 'กำลังอ่านข้อมูล…'}',
@@ -499,32 +467,6 @@ Future<void> _runAgpsAction({required bool reset}) async {
         'SNR: ${_radioValue('lteSnr', ' dB')}',
         'TA: ${_radioValue('lteTa')}',
       ]),
-      Card(
-        color: Colors.blue.withOpacity(.08),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('🌐 อินเทอร์เน็ต IPv4',
-                  style: Theme.of(context).textTheme.titleMedium),
-              const Divider(),
-              Text('สถานะ: ${_data['ipv4Status'] ?? 'รอการตรวจสอบ'}'),
-              Text('ปลายทาง: ${_data['ipv4Host'] ?? Ipv4NetworkMonitor.host}:${_data['ipv4Port'] ?? Ipv4NetworkMonitor.port}'),
-              Text('IPv4: ${_data['ipv4Address'] ?? 'N/A'}'),
-              Text('TCP Latency: ${tcpLatency == null ? 'N/A' : '${tcpLatency.toStringAsFixed(0)} ms'}'),
-              Text('Timeout: ${_data['ipv4Timeout'] == true ? 'ใช่' : _data['ipv4Success'] == true ? 'ไม่พบ' : 'ยังไม่มีผล'}'),
-              Text('อัตราเชื่อมต่อสำเร็จ: ${successRate == null ? 'N/A' : '${successRate.toStringAsFixed(1)}%'}'),
-              Text('จำนวนตัวอย่าง: ${_data['ipv4Samples'] ?? 0}'),
-              Text('คะแนน Network: ${networkScore == null ? 'รอข้อมูล' : '$networkScore / 100'}'),
-              Text('ตรวจล่าสุด: ${_data['ipv4CheckedAt'] ?? 'ยังไม่มีข้อมูล'}'),
-              const SizedBox(height: 6),
-              const Text('ตรวจ DNS IPv4 และ TCP พอร์ต 443 เท่านั้น ไม่เปลี่ยน APN/DNS/VPN ของเครื่อง',
-                  style: TextStyle(fontSize: 12)),
-            ],
-          ),
-        ),
-      ),
       Card(child:Padding(padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('สถานะบริการ: ${_running ? 'ทำงานเบื้องหลัง' : 'หยุดอยู่'}'),Text('เริ่มมา: ${_started == null ? 'ไม่ทราบ' : _elapsed(DateTime.now().difference(_started!))}'),const SizedBox(height:12),SizedBox(width:double.infinity,height:56,child:FilledButton.icon(style:FilledButton.styleFrom(backgroundColor:_running?Colors.red:Colors.green),onPressed:(_serviceBusy)?null:_startStop,icon:(_serviceBusy)?const SizedBox(width:20,height:20,child:CircularProgressIndicator(strokeWidth:2)):Icon(_running?Icons.stop:Icons.play_arrow),label:Text((_serviceBusy)?'กำลังดำเนินการ…':_running?'⏹️ หยุดติดตาม':'▶️ เริ่มติดตาม')))]))),
       Wrap(spacing:8,runSpacing:8,children:[
         OutlinedButton.icon(onPressed:()=>_settings('location'),icon:const Icon(Icons.location_on),label:const Text('ตั้งค่า GPS')),
