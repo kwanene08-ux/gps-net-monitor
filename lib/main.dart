@@ -181,11 +181,6 @@ class _DashboardState extends State<Dashboard> {
         }
       }
 
-      final bg = await Permission.locationAlways.status;
-      if (!bg.isGranted) {
-        _snack('หากต้องการติดตามตอนปิดจอ ให้ตั้งสิทธิ์ตำแหน่งเป็น “อนุญาตตลอดเวลา” ในการตั้งค่าแอป');
-      }
-
       final result = await FlutterForegroundTask.startService(
         serviceId: 7001,
         notificationTitle: '🟢 GPS Net Monitor — กำลังทำงาน',
